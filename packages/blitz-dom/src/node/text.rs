@@ -72,6 +72,18 @@ pub struct TextInputData {
     /// vertical offset. It is kept up to date so that the caret remains visible within the
     /// input's content box.
     pub scroll_offset: f32,
+    /// The `placeholder` attribute's text, laid out with the `::placeholder`
+    /// style. Painted while the input is empty.
+    pub placeholder: Option<PlaceholderLayout>,
+}
+
+/// The laid-out `placeholder` text of a text input.
+#[derive(Clone)]
+pub struct PlaceholderLayout {
+    /// Laid out with the `::placeholder` font properties, at device scale.
+    pub layout: parley::Layout<TextBrush>,
+    /// The `::placeholder` `color`, with its `opacity` applied.
+    pub color: crate::util::Color,
 }
 
 // FIXME: Implement Clone for PlainEditor
@@ -88,6 +100,7 @@ impl TextInputData {
             editor,
             is_multiline,
             scroll_offset: 0.0,
+            placeholder: None,
         }
     }
 

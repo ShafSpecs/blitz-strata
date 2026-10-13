@@ -90,6 +90,12 @@ textarea {
     font-family: monospace;
 }
 
+/* The input's own colour at 54% (Firefox's default), so placeholders read as
+ * placeholders on light and dark themes alike. */
+::placeholder {
+    color: color-mix(in srgb, currentColor 54%, transparent);
+}
+
 input:focus,
 textarea:focus {
     outline: 2px solid #4D90FE;

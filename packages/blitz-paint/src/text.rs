@@ -562,6 +562,54 @@ fn flush_line_decorations(
     }
 }
 
+/// Draw the glyphs of a layout in a single colour, without decorations (for
+/// text that isn't part of the DOM, such as an input's placeholder).
+pub(crate) fn fill_text_in_color<'a>(
+    scene: &mut impl PaintScene,
+    lines: impl Iterator<Item = Line<'a, TextBrush>>,
+    transform: Affine,
+    scale: f64,
+    color: Color,
+) {
+    for line in lines {
+        for item in line.items() {
+            let PositionedLayoutItem::GlyphRun(glyph_run) = item else {
+                continue;
+            };
+            let run = glyph_run.run();
+            let font_size = run.font_size();
+            let glyph_xform = run
+                .synthesis()
+                .skew()
+                .map(|angle| Affine::skew(angle.to_radians().tan() as f64, 0.0));
+            let embolden = if FONT_EMBOLDEN_ENABLED {
+                let fs = font_size as f64 / scale;
+                kurbo::Vec2::new((0.015125 * fs).min(0.3), (0.0121 * fs).min(0.3))
+            } else {
+                kurbo::Vec2::default()
+            };
+            let normalized_coords: &[i16] = bytemuck::cast_slice(run.normalized_coords());
+            scene.draw_glyphs(
+                run.font(),
+                font_size,
+                !FONT_EMBOLDEN_ENABLED, // hint
+                normalized_coords,
+                embolden,
+                Fill::NonZero,
+                &anyrender::Paint::from(color),
+                1.0, // alpha
+                transform,
+                glyph_xform,
+                glyph_run.positioned_glyphs().map(|glyph| anyrender::Glyph {
+                    id: glyph.id as _,
+                    x: glyph.x,
+                    y: glyph.y,
+                }),
+            );
+        }
+    }
+}
+
 pub(crate) fn stroke_text<'a>(
     scene: &mut impl PaintScene,
     lines: impl Iterator<Item = Line<'a, TextBrush>>,

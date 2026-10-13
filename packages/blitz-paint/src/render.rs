@@ -950,6 +950,20 @@ impl ElementCx<'_, '_> {
                 };
             }
 
+            // An empty input shows its `placeholder` (styled by `::placeholder`).
+            if input_data.editor.raw_text().is_empty() {
+                if let Some(placeholder) = &input_data.placeholder {
+                    crate::text::fill_text_in_color(
+                        scene,
+                        placeholder.layout.lines(),
+                        transform,
+                        self.scale,
+                        placeholder.color,
+                    );
+                }
+                return;
+            }
+
             // Render text
             let mut draw_text_context = self.context.draw_text_context.borrow_mut();
             crate::text::stroke_text(
