@@ -10,7 +10,8 @@
 //!
 //! [`round_layout_to_device_pixels`] is `taffy::round_layout` with every
 //! rounding done on the device-pixel grid (`scale` = device pixels per CSS
-//! pixel). At a scale of 1 it is identical to `taffy::round_layout`.
+//! pixel), except that border widths are rounded as widths rather than by
+//! the position of their edges (they're already device-pixel snapped).
 
 use taffy::{Layout, NodeId, RoundTree};
 
@@ -43,10 +44,15 @@ fn round_inner(tree: &mut impl RoundTree, node_id: NodeId, parent_x: f32, parent
     layout.size.height = round(y + h) - round(y);
     layout.scrollbar_size.width = round(unrounded.scrollbar_size.width);
     layout.scrollbar_size.height = round(unrounded.scrollbar_size.height);
-    layout.border.left = round(x + unrounded.border.left) - round(x);
-    layout.border.right = round(x + w) - round(x + w - unrounded.border.right);
-    layout.border.top = round(y + unrounded.border.top) - round(y);
-    layout.border.bottom = round(y + h) - round(y + h - unrounded.border.bottom);
+    // Border widths are already whole device pixels (Stylo snaps them), so
+    // the widths themselves are rounded, not their edges' positions. Rounding
+    // both edges of a 1-device-pixel border that sits on a half pixel lets
+    // float error round them to the same pixel: a zero-width side, which
+    // loses the whole border (see `border_width_survives_half_pixel_edges`).
+    layout.border.left = round(unrounded.border.left);
+    layout.border.right = round(unrounded.border.right);
+    layout.border.top = round(unrounded.border.top);
+    layout.border.bottom = round(unrounded.border.bottom);
     layout.padding.left = round(x + unrounded.padding.left) - round(x);
     layout.padding.right = round(x + w) - round(x + w - unrounded.padding.right);
     layout.padding.top = round(y + unrounded.padding.top) - round(y);
@@ -76,6 +82,24 @@ fn round_inner(tree: &mut impl RoundTree, node_id: NodeId, parent_x: f32, parent
 #[cfg(test)]
 mod tests {
     use super::round_to_device;
+
+    /// A 1px border at 125% is one device pixel (0.8 CSS px). Rounding its two
+    /// edges by position, as `taffy::round_layout` does, gives 0 device pixels
+    /// for some f32 positions where both edges sit on a half pixel (seen in
+    /// the workbench: the bottom border of a 27.6px-high button). Rounding the
+    /// width itself always gives 1.
+    #[test]
+    fn border_width_survives_half_pixel_edges() {
+        let (scale, border) = (1.25f32, 0.8f32);
+        let mut by_position_lost_it = false;
+        for i in 0..200_000 {
+            let edge = i as f32 * 0.01; // outer bottom edge, CSS px
+            let by_position = round_to_device(edge, scale) - round_to_device(edge - border, scale);
+            by_position_lost_it |= by_position == 0.0;
+            assert!((round_to_device(border, scale) * scale - 1.0).abs() < 1e-4);
+        }
+        assert!(by_position_lost_it, "expected the position-rounded width to hit 0 somewhere");
+    }
 
     #[test]
     fn snaps_to_device_pixels() {
