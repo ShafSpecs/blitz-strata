@@ -1,13 +1,15 @@
 use crate::{
     BaseDocument, ElementData, Node as BlitzDomNode, NodeData, NodeId as BlitzDomNodeId, local_name,
 };
-use accesskit::{Node as AccessKitNode, NodeId, Role, TreeId, TreeInfo, TreeUpdate};
+use accesskit::{Affine, Node as AccessKitNode, NodeId, Rect, Role, TreeId, TreeInfo, TreeUpdate};
 use style::properties::longhands::visibility;
 
 impl BaseDocument {
     pub fn build_accessibility_tree(&self) -> TreeUpdate {
         let mut nodes = std::collections::HashMap::new();
         let mut window = AccessKitNode::new(Role::Window);
+        // Node bounds are in CSS pixels; the window maps them to device pixels.
+        window.set_transform(Affine::scale(self.viewport.scale_f64()));
         let mut hidden_nodes = std::collections::HashSet::new();
         let mut labelled_by_nodes = Vec::new();
         let mut described_by_nodes = Vec::new();
@@ -127,6 +129,20 @@ impl BaseDocument {
 
             builder.set_role(role);
 
+            if let Some(label) = self.accessible_name(node, element_data, role) {
+                builder.set_label(label);
+            }
+            if let Some(rect) = self.get_client_bounding_rect(node.id) {
+                if rect.width > 0.0 || rect.height > 0.0 {
+                    builder.set_bounds(Rect {
+                        x0: rect.x,
+                        y0: rect.y,
+                        x1: rect.x + rect.width,
+                        y1: rect.y + rect.height,
+                    });
+                }
+            }
+
             // https://www.w3.org/TR/wai-aria-1.2/#tree_exclusion
             if element_data.attr(local_name!("aria-hidden")) == Some("true") {
                 builder.set_hidden();
@@ -180,16 +196,159 @@ impl BaseDocument {
     }
 }
 
+impl BaseDocument {
+    /// The element's accessible name: a subset of
+    /// https://www.w3.org/TR/accname-1.2/ in priority order (`aria-labelledby`,
+    /// `aria-label`, native labels such as `<label>` and `alt`, name from
+    /// content for the roles that allow it, then `title` and `placeholder`).
+    fn accessible_name(
+        &self,
+        node: &BlitzDomNode,
+        element: &ElementData,
+        role: Role,
+    ) -> Option<String> {
+        let non_empty = |s: String| {
+            let s = collapse_whitespace(&s);
+            (!s.is_empty()).then_some(s)
+        };
+
+        if let Some(ids) = element.attr(local_name!("aria-labelledby")) {
+            let text: Vec<String> = ids
+                .split_ascii_whitespace()
+                .filter_map(|id| self.get_element_by_id(id))
+                .map(|id| self.nodes[id].text_content())
+                .collect();
+            if let Some(name) = non_empty(text.join(" ")) {
+                return Some(name);
+            }
+        }
+        if let Some(name) = element.attr(local_name!("aria-label")).map(str::to_owned).and_then(non_empty) {
+            return Some(name);
+        }
+
+        let tag = &element.name.local;
+        let is_labelable = *tag == local_name!("input")
+            || *tag == local_name!("textarea")
+            || *tag == local_name!("select")
+            || *tag == local_name!("button")
+            || *tag == local_name!("meter")
+            || *tag == local_name!("progress");
+        if is_labelable && element.attr(local_name!("type")) != Some("hidden") {
+            if let Some(name) = self.label_text(node, element).and_then(non_empty) {
+                return Some(name);
+            }
+        }
+        if *tag == local_name!("img") || element.attr(local_name!("type")) == Some("image") {
+            if let Some(alt) = element.attr(local_name!("alt")) {
+                return non_empty(alt.to_owned());
+            }
+        }
+        if name_from_content(role) {
+            if let Some(name) = non_empty(self.text_for_name(node)) {
+                return Some(name);
+            }
+        }
+        element
+            .attr(local_name!("title"))
+            .or_else(|| element.attr(local_name!("placeholder")))
+            .map(str::to_owned)
+            .and_then(non_empty)
+    }
+
+    /// A node's text for name computation: descendant text, with a space
+    /// around the content of children that aren't inline (accname 2F: block
+    /// and flex children read as separate words, e.g. "CI-065 14.8").
+    fn text_for_name(&self, node: &BlitzDomNode) -> String {
+        let mut out = String::new();
+        for &child_id in node.children.iter() {
+            let child = &self.nodes[child_id];
+            if child.is_text_node() {
+                out.push_str(&child.text_content());
+            } else if child.element_data().is_some() && !child.is_hidden_from_accessibility_tree() {
+                let inline = child
+                    .display_style()
+                    .is_some_and(|d| d.outside() == style::values::specified::box_::DisplayOutside::Inline
+                        && d.inside() == style::values::specified::box_::DisplayInside::Flow);
+                let text = self.text_for_name(child);
+                if inline {
+                    out.push_str(&text);
+                } else {
+                    out.push(' ');
+                    out.push_str(&text);
+                    out.push(' ');
+                }
+            }
+        }
+        out
+    }
+
+    /// Text of the `<label>` elements associated with a labelable element:
+    /// those whose `for` names its id, and an ancestor `<label>`.
+    fn label_text(&self, node: &BlitzDomNode, element: &ElementData) -> Option<String> {
+        let mut parts = Vec::new();
+        if let Some(id) = element.attr(local_name!("id")).filter(|id| !id.is_empty()) {
+            for (_, candidate) in self.nodes.iter() {
+                if let Some(el) = candidate.element_data() {
+                    if el.name.local == local_name!("label") && el.attr(local_name!("for")) == Some(id) {
+                        parts.push(self.text_for_name(candidate));
+                    }
+                }
+            }
+        }
+        let mut ancestor = node.parent;
+        while let Some(id) = ancestor {
+            let candidate = &self.nodes[id];
+            if candidate.element_data().is_some_and(|el| el.name.local == local_name!("label")) {
+                parts.push(self.text_for_name(candidate));
+                break;
+            }
+            ancestor = candidate.parent;
+        }
+        (!parts.is_empty()).then(|| parts.join(" "))
+    }
+}
+
+/// Roles whose name may come from their content (accname, "name from content").
+fn name_from_content(role: Role) -> bool {
+    matches!(
+        role,
+        Role::Button
+            | Role::Cell
+            | Role::CheckBox
+            | Role::ColumnHeader
+            | Role::GridCell
+            | Role::Heading
+            | Role::Link
+            | Role::ListBoxOption
+            | Role::MenuItem
+            | Role::MenuItemCheckBox
+            | Role::MenuItemRadio
+            | Role::RadioButton
+            | Role::Row
+            | Role::RowHeader
+            | Role::Switch
+            | Role::Tab
+            | Role::Tooltip
+            | Role::TreeItem
+    )
+}
+
+fn collapse_whitespace(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 impl BlitzDomNode {
     // https://www.w3.org/TR/wai-aria-1.2/#tree_exclusion
     fn is_hidden_from_accessibility_tree(&self) -> bool {
         self.try_stylo_element_data()
             .as_ref()
             .and_then(|s| s.get())
-            .map(|s| {
-                s.styles.is_display_none()
-                    || s.styles.primary().clone_visibility()
-                        == visibility::computed_value::T::Hidden
+            // A node created since the last style pass has no style yet; the tree
+            // is rebuilt once it has one.
+            .and_then(|s| s.styles.get_primary().cloned())
+            .map(|primary| {
+                primary.get_box().clone_display().is_none()
+                    || primary.clone_visibility() == visibility::computed_value::T::Hidden
             })
             .unwrap_or(false)
     }
