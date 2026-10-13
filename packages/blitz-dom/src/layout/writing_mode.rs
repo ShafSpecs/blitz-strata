@@ -253,12 +253,9 @@ impl LayoutPassState<'_> {
             height: rounded_end.y - rounded_pos.y,
         };
         layout.scrollbar_size = unrounded.scrollbar_size.map(round);
-        layout.border = taffy::Rect {
-            left: from_left(unrounded.border.left),
-            right: from_right(unrounded.border.right),
-            top: from_top(unrounded.border.top),
-            bottom: from_bottom(unrounded.border.bottom),
-        };
+        // Border widths are device-pixel snapped already: round the widths, not
+        // their edges (see `round::round_layout_to_device_pixels`).
+        layout.border = unrounded.border.map(round);
         layout.padding = taffy::Rect {
             left: from_left(unrounded.padding.left),
             right: from_right(unrounded.padding.right),
