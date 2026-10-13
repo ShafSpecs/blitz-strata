@@ -24,8 +24,8 @@ use crate::{
         CONSTRUCT_BOX, CONSTRUCT_DESCENDENT, CONSTRUCT_FC, sort_layout_children_by_order,
     },
     node::{
-        ListItemLayout, ListItemLayoutPosition, Marker, NodeFlags, NodeKind, SpecialElementData,
-        TextBrush, TextInputData, TextLayout,
+        ListItemLayout, ListItemLayoutPosition, Marker, NodeFlags, NodeKind, PlaceholderLayout,
+        SpecialElementData, TextBrush, TextInputData, TextLayout,
     },
     qual_name, stylo_to_parley,
     traversal::{iter_children, iter_children_and_pseudos},
@@ -912,6 +912,63 @@ fn create_text_editor(doc: &mut BaseDocument, input_element_id: NodeId, is_multi
     editor.set_base_direction(base_direction);
 
     editor.refresh_layout(&mut doc.font_ctx.lock().unwrap(), &mut doc.layout_ctx);
+
+    let placeholder = build_placeholder_layout(doc, input_element_id, alignment);
+    if let Some(SpecialElementData::TextInput(data)) = doc.nodes[input_element_id]
+        .data
+        .downcast_element_mut()
+        .map(|el| &mut el.special_data)
+    {
+        data.placeholder = placeholder;
+    }
+}
+
+/// Lay out a text input's `placeholder` attribute with its `::placeholder`
+/// style. `None` when there is no (non-empty) placeholder.
+fn build_placeholder_layout(
+    doc: &mut BaseDocument,
+    input_element_id: NodeId,
+    alignment: parley::layout::Alignment,
+) -> Option<PlaceholderLayout> {
+    use crate::util::ToColorColor as _;
+
+    let node = &doc.nodes[input_element_id];
+    let element = node.element_data()?;
+    // Line breaks are stripped from the placeholder of single-line inputs (HTML).
+    let multiline = element.name.local == local_name!("textarea");
+    let mut text = element.attr(local_name!("placeholder"))?.to_string();
+    if !multiline {
+        text.retain(|c| !matches!(c, '\n' | '\r'));
+    }
+    if text.is_empty() {
+        return None;
+    }
+    let style = doc.lazy_pseudo_element_style(
+        input_element_id,
+        &style::selector_parser::PseudoElement::Placeholder,
+    )?;
+    let parley_style = stylo_to_parley::style(input_element_id, &style);
+    let opacity = style.get_effects().opacity;
+    let color = style.clone_color().as_color_color().multiply_alpha(opacity);
+
+    let scale = doc.viewport.scale();
+    let font_ctx = &mut doc.font_ctx.lock().unwrap();
+    let mut builder = doc.layout_ctx.ranged_builder(font_ctx, &text, scale, true);
+    builder.push_default(StyleProperty::FontFamily(parley_style.font_family));
+    builder.push_default(StyleProperty::FontSize(parley_style.font_size));
+    builder.push_default(StyleProperty::FontWidth(parley_style.font_width));
+    builder.push_default(StyleProperty::FontStyle(parley_style.font_style));
+    builder.push_default(StyleProperty::FontWeight(parley_style.font_weight));
+    builder.push_default(StyleProperty::FontVariations(parley_style.font_variations));
+    builder.push_default(StyleProperty::FontFeatures(parley_style.font_features));
+    builder.push_default(StyleProperty::LineHeight(parley_style.line_height));
+    builder.push_default(StyleProperty::WordSpacing(parley_style.word_spacing));
+    builder.push_default(StyleProperty::LetterSpacing(parley_style.letter_spacing));
+    builder.push_default(StyleProperty::Brush(parley_style.brush));
+    let mut layout = builder.build(&text);
+    layout.break_all_lines(None);
+    layout.align(alignment, Default::default());
+    Some(PlaceholderLayout { layout, color })
 }
 
 fn create_checkbox_input(doc: &mut BaseDocument, input_element_id: NodeId) {

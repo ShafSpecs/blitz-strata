@@ -1516,3 +1516,30 @@ fn parse_inline() {
 
     // let val = CSSInlineStyleDeclaration();
 }
+
+impl crate::document::BaseDocument {
+    /// The computed style of a lazily-cascaded pseudo-element (such as
+    /// `::placeholder`) of `node_id`, or `None` if the node has no style yet.
+    pub(crate) fn lazy_pseudo_element_style(
+        &self,
+        node_id: blitz_traits::node_id::NodeId,
+        pseudo: &PseudoElement,
+    ) -> Option<Arc<ComputedValues>> {
+        let node = &self.nodes[node_id];
+        let originating = node.primary_styles()?;
+        let guard = &self.guard;
+        let guards = StylesheetGuards {
+            author: &guard.read(),
+            ua_or_user: &guard.read(),
+        };
+        self.stylist.lazily_compute_pseudo_element_style(
+            &guards,
+            node,
+            pseudo,
+            RuleInclusion::All,
+            &originating,
+            false,
+            None,
+        )
+    }
+}
