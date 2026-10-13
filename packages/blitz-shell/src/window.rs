@@ -373,12 +373,12 @@ impl<Rend: WindowRenderer> View<Rend> {
         if let Some(waker) = &self.waker {
             let cx = std::task::Context::from_waker(waker);
             if self.doc.poll(Some(cx)) {
+                // `poll` returning true means the document changed. Rebuilding
+                // is a no-op unless an assistive technology is connected.
                 #[cfg(feature = "accessibility")]
                 {
                     let inner = self.doc.inner();
-                    if inner.has_changes() {
-                        self.accessibility.update_tree(&inner);
-                    }
+                    self.accessibility.update_tree(&inner);
                 }
 
                 self.request_redraw();
