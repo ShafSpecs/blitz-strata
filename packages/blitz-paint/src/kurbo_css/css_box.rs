@@ -614,6 +614,19 @@ impl BuildBezpath for BezPath {
 
 /// Get the start angle of the arc based on the border width and the radii
 fn start_angle(bt_width: f64, br_width: f64, radii: Vec2) -> f64 {
+    // A zero-width side makes `w` 0 or infinite (and 0/0 when both are zero),
+    // which turned the corner, and with it the whole edge path, into NaN: the
+    // border wasn't drawn at all. Use the limits: no top width puts the split
+    // at the end of the arc (k → ∞, t → π/2), no side width at its start
+    // (k → 0, t → 0). With neither, nothing is drawn and any angle will do.
+    if !(bt_width > 0.0 && br_width > 0.0) {
+        return match (bt_width > 0.0, br_width > 0.0) {
+            (false, true) => std::f64::consts::FRAC_PI_2,
+            (true, false) => 0.0,
+            _ => std::f64::consts::FRAC_PI_4,
+        };
+    }
+
     // slope of the border intersection split
     let w = bt_width / br_width;
     let x = radii.y / (w * radii.x);
@@ -743,6 +756,37 @@ mod tests {
             assert!(
                 reaches,
                 "{edge:?}: no point reached the outer edge {expected}"
+            );
+        }
+    }
+
+    /// A zero-width side next to a rounded corner (e.g. `border: 1px solid;
+    /// border-bottom: 0; border-radius: 8px`) used to produce NaN coordinates,
+    /// and the renderer dropped the whole border.
+    #[test]
+    fn zero_width_side_has_no_nan() {
+        let r = Vec2::new(10.0, 10.0);
+        assert!((start_angle(0.0, 1.0, r) - start_angle(1e-12, 1.0, r)).abs() < 1e-5);
+        assert!((start_angle(1.0, 0.0, r) - start_angle(1.0, 1e-12, r)).abs() < 1e-5);
+        assert!(start_angle(0.0, 0.0, r).is_finite());
+
+        let b = CssBox::new(
+            Rect::new(0.0, 0.0, 178.0, 34.0),
+            Insets { x0: 1.0, y0: 1.0, x1: 1.0, y1: 0.0 },
+            Insets::ZERO,
+            0.0,
+            NonUniformRoundedRectRadii {
+                top_left: r,
+                top_right: r,
+                bottom_right: r,
+                bottom_left: r,
+            },
+        );
+        for edge in [Edge::Top, Edge::Right, Edge::Bottom, Edge::Left] {
+            let path = b.border_edge_shape(edge);
+            assert!(
+                path.elements().iter().all(|el| el.end_point().is_none_or(|p| p.is_finite())),
+                "{edge:?}: NaN in {path:?}"
             );
         }
     }
