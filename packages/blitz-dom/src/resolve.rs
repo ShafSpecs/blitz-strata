@@ -439,6 +439,8 @@ impl BaseDocument {
         };
 
         let root_element_id = crate::taffy_node_id(self.root_element().id);
+        // Device pixels per CSS pixel: layout is rounded to the device-pixel grid.
+        let scale = self.viewport.scale();
 
         // println!("\n\nRESOLVE LAYOUT\n===========\n");
 
@@ -454,9 +456,9 @@ impl BaseDocument {
         };
         taffy::compute_root_layout(&mut state, root_element_id, available_space);
         #[cfg(feature = "writing-mode")]
-        state.physicalise_and_round_layout(root_element_id);
+        state.physicalise_and_round_layout(root_element_id, scale);
         #[cfg(not(feature = "writing-mode"))]
-        taffy::round_layout(&mut state, root_element_id);
+        crate::layout::round::round_layout_to_device_pixels(&mut state, root_element_id, scale);
 
         // println!("\n\n");
         // taffy::print_tree(self, root_node_id)
