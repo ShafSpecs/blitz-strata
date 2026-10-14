@@ -338,6 +338,11 @@ impl EventHandler for DioxusEventHandler<'_> {
             | DomEventData::AnimationCancel(_)
             | DomEventData::TransitionEnd(_)
             | DomEventData::TransitionCancel(_) => None,
+
+            // TODO: composition events (convert_composition_data)
+            DomEventData::CompositionStart(_)
+            | DomEventData::CompositionUpdate(_)
+            | DomEventData::CompositionEnd(_) => None,
         };
 
         let Some(event_data) = event_data else {

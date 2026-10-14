@@ -160,6 +160,10 @@ pub enum DomEventKind {
     TransitionEnd,
     TransitionCancel,
 
+    CompositionStart,
+    CompositionUpdate,
+    CompositionEnd,
+
     AppleStandardKeybinding,
 }
 impl DomEventKind {
@@ -216,6 +220,10 @@ impl FromStr for DomEventKind {
             "animationcancel" => Ok(Self::AnimationCancel),
             "transitionend" => Ok(Self::TransitionEnd),
             "transitioncancel" => Ok(Self::TransitionCancel),
+
+            "compositionstart" => Ok(Self::CompositionStart),
+            "compositionupdate" => Ok(Self::CompositionUpdate),
+            "compositionend" => Ok(Self::CompositionEnd),
             _ => Err(()),
         }
     }
@@ -272,7 +280,21 @@ pub enum DomEventData {
     TransitionEnd(BlitzAnimationEvent),
     TransitionCancel(BlitzAnimationEvent),
 
+    /// An IME composition (`CompositionEvent`): it starts with the first
+    /// preedit, updates with each, and ends at a commit or a cancel.
+    CompositionStart(BlitzCompositionEvent),
+    CompositionUpdate(BlitzCompositionEvent),
+    CompositionEnd(BlitzCompositionEvent),
+
     AppleStandardKeybinding(SmolStr),
+}
+
+/// A `CompositionEvent`.
+#[derive(Clone, Debug)]
+pub struct BlitzCompositionEvent {
+    /// The composition string: the preedit for updates, the committed text
+    /// at the end (empty when cancelled).
+    pub data: String,
 }
 
 /// An `AnimationEvent` or `TransitionEvent`.
@@ -341,6 +363,9 @@ impl DomEventData {
             Self::AnimationCancel { .. } => "animationcancel",
             Self::TransitionEnd { .. } => "transitionend",
             Self::TransitionCancel { .. } => "transitioncancel",
+            Self::CompositionStart { .. } => "compositionstart",
+            Self::CompositionUpdate { .. } => "compositionupdate",
+            Self::CompositionEnd { .. } => "compositionend",
 
             Self::AppleStandardKeybinding { .. } => "applekeybinding",
         }
@@ -392,6 +417,9 @@ impl DomEventData {
             Self::AnimationCancel { .. } => DomEventKind::AnimationCancel,
             Self::TransitionEnd { .. } => DomEventKind::TransitionEnd,
             Self::TransitionCancel { .. } => DomEventKind::TransitionCancel,
+            Self::CompositionStart { .. } => DomEventKind::CompositionStart,
+            Self::CompositionUpdate { .. } => DomEventKind::CompositionUpdate,
+            Self::CompositionEnd { .. } => DomEventKind::CompositionEnd,
 
             Self::AppleStandardKeybinding { .. } => DomEventKind::AppleStandardKeybinding,
         }
@@ -443,6 +471,9 @@ impl DomEventData {
             Self::AnimationCancel { .. } => false,
             Self::TransitionEnd { .. } => false,
             Self::TransitionCancel { .. } => false,
+            Self::CompositionStart { .. } => true,
+            Self::CompositionUpdate { .. } => false,
+            Self::CompositionEnd { .. } => false,
 
             Self::AppleStandardKeybinding { .. } => true,
         }
@@ -494,6 +525,9 @@ impl DomEventData {
             Self::AnimationCancel { .. } => true,
             Self::TransitionEnd { .. } => true,
             Self::TransitionCancel { .. } => true,
+            Self::CompositionStart { .. } => true,
+            Self::CompositionUpdate { .. } => true,
+            Self::CompositionEnd { .. } => true,
 
             Self::AppleStandardKeybinding { .. } => false,
         }
