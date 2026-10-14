@@ -68,18 +68,26 @@ input[type="hidden" i] {
     display: none !important;
 }
 
-input[type="checkbox"] {
-    width: 14px;
-    height: 14px;
+/* Checkboxes and radios are sized by their border box and have no padding,
+ * border or background of their own, as in browsers (Firefox's forms.css,
+ * Chromium's html.css): an author's width and height are the control's size,
+ * with or without appearance: none. */
+input[type="checkbox" i],
+input[type="radio" i] {
+    box-sizing: border-box;
+    width: 13px;
+    height: 13px;
+    padding: initial;
+    border: initial;
+    background-color: initial;
+}
+
+input[type="checkbox" i] {
     margin: 3px 3px 3px 4px;
 }
 
-input[type="radio"] {
-    width: 14px;
-    height: 14px;
-    border-radius: 14px;
-    border: none;
-    margin: 3px 3px 3px 4px;
+input[type="radio" i] {
+    margin: 3px 3px 0 5px;
 }
 
 input,
