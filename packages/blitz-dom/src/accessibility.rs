@@ -1,7 +1,10 @@
 use crate::{
     BaseDocument, ElementData, Node as BlitzDomNode, NodeData, NodeId as BlitzDomNodeId, local_name,
 };
-use accesskit::{Affine, Node as AccessKitNode, NodeId, Rect, Role, TreeId, TreeInfo, TreeUpdate};
+use accesskit::{
+    Action, Affine, HasPopup, Node as AccessKitNode, NodeId, Rect, Role, Toggled, TreeId, TreeInfo,
+    TreeUpdate,
+};
 use style::properties::longhands::visibility;
 
 impl BaseDocument {
@@ -183,6 +186,8 @@ impl BaseDocument {
                 builder.set_level(default_level);
             }
 
+            self.set_states_and_actions(element_data, role, &mut builder);
+
             builder.set_html_tag(name);
         } else if node.is_text_node() {
             builder.set_role(Role::TextRun);
@@ -197,6 +202,182 @@ impl BaseDocument {
 }
 
 impl BaseDocument {
+    /// States (checked, pressed, expanded, selected, disabled, values) and the
+    /// actions an assistive technology may request (focus, click, set value,
+    /// increment, decrement, expand, collapse), from the element and its ARIA
+    /// attributes, per https://www.w3.org/TR/html-aam-1.0/ and
+    /// https://www.w3.org/TR/core-aam-1.2/. The platform adapter derives its
+    /// patterns from these (on Windows: Invoke, Toggle, SelectionItem,
+    /// ExpandCollapse, Value, RangeValue).
+    fn set_states_and_actions(
+        &self,
+        element: &ElementData,
+        role: Role,
+        builder: &mut AccessKitNode,
+    ) {
+        let tag = &element.name.local;
+        let aria = |name: &str| {
+            element
+                .attrs()
+                .iter()
+                .find(|a| a.name.ns.is_empty() && &*a.name.local == name)
+                .map(|a| a.value.as_str())
+        };
+        let tristate = |v: &str| match v {
+            "true" => Some(Toggled::True),
+            "false" => Some(Toggled::False),
+            "mixed" => Some(Toggled::Mixed),
+            _ => None,
+        };
+
+        let is_form_control = *tag == local_name!("button")
+            || *tag == local_name!("input")
+            || *tag == local_name!("select")
+            || *tag == local_name!("textarea");
+        let disabled = (is_form_control && element.attr(local_name!("disabled")).is_some())
+            || aria("aria-disabled") == Some("true");
+        if disabled {
+            builder.set_disabled();
+        }
+
+        if element.is_focusable_area() && !disabled {
+            builder.add_action(Action::Focus);
+        }
+
+        // Checked and pressed states.
+        let checkable = matches!(
+            role,
+            Role::CheckBox
+                | Role::Switch
+                | Role::RadioButton
+                | Role::MenuItemCheckBox
+                | Role::MenuItemRadio
+        );
+        if checkable {
+            let native = element
+                .checkbox_input_checked()
+                .map(|c| if c { Toggled::True } else { Toggled::False });
+            let toggled = aria("aria-checked")
+                .and_then(tristate)
+                .or(native)
+                .unwrap_or(Toggled::False);
+            builder.set_toggled(toggled);
+        } else if role == Role::Button {
+            if let Some(pressed) = aria("aria-pressed").and_then(tristate) {
+                builder.set_toggled(pressed);
+            }
+        }
+
+        if let Some(expanded) = aria("aria-expanded") {
+            let expanded = expanded == "true";
+            builder.set_expanded(expanded);
+            if !disabled {
+                builder.add_action(if expanded { Action::Collapse } else { Action::Expand });
+            }
+        }
+        match aria("aria-haspopup") {
+            Some("menu" | "true") => builder.set_has_popup(HasPopup::Menu),
+            Some("listbox") => builder.set_has_popup(HasPopup::Listbox),
+            Some("tree") => builder.set_has_popup(HasPopup::Tree),
+            Some("grid") => builder.set_has_popup(HasPopup::Grid),
+            Some("dialog") => builder.set_has_popup(HasPopup::Dialog),
+            _ => {}
+        }
+        if let Some(selected) = aria("aria-selected") {
+            builder.set_selected(selected == "true");
+        }
+        if aria("aria-modal") == Some("true") {
+            builder.set_modal();
+        }
+        if element.attr(local_name!("required")).is_some() || aria("aria-required") == Some("true") {
+            builder.set_required();
+        }
+
+        // Activation: what a click does for a pointer user.
+        let clickable = matches!(
+            role,
+            Role::Button
+                | Role::Link
+                | Role::CheckBox
+                | Role::Switch
+                | Role::RadioButton
+                | Role::Tab
+                | Role::MenuItem
+                | Role::MenuItemCheckBox
+                | Role::MenuItemRadio
+                | Role::ListBoxOption
+                | Role::TreeItem
+                | Role::DisclosureTriangle
+        ) || (role == Role::ComboBox && aria("aria-expanded").is_some());
+        if clickable && !disabled {
+            builder.add_action(Action::Click);
+        }
+
+        // Text fields: their value, settable unless read-only.
+        if let Some(input) = element.text_input_data() {
+            let text = input.editor.raw_text();
+            if role == Role::PasswordInput {
+                builder.set_value("\u{2022}".repeat(text.chars().count()));
+            } else {
+                builder.set_value(text);
+            }
+            if let Some(placeholder) = element.attr(local_name!("placeholder")) {
+                builder.set_placeholder(placeholder);
+            }
+            if element.attr(local_name!("readonly")).is_some() || aria("aria-readonly") == Some("true") {
+                builder.set_read_only();
+            } else if !disabled {
+                builder.add_action(Action::SetValue);
+            }
+        }
+
+        // Ranges: a native range input, or an ARIA range widget.
+        if let Some(range) = crate::RangeState::of(element) {
+            builder.set_numeric_value(range.value);
+            builder.set_min_numeric_value(range.min);
+            builder.set_max_numeric_value(range.max);
+            builder.set_numeric_value_step(range.small_step());
+            builder.set_numeric_value_jump(range.large_step());
+            if !disabled {
+                builder.add_action(Action::SetValue);
+                builder.add_action(Action::Increment);
+                builder.add_action(Action::Decrement);
+            }
+        } else if matches!(
+            role,
+            Role::Slider | Role::SpinButton | Role::ScrollBar | Role::ProgressIndicator | Role::Meter
+        ) {
+            let number = |name: &str| aria(name).and_then(|v| v.trim().parse::<f64>().ok());
+            if let Some(now) = number("aria-valuenow") {
+                builder.set_numeric_value(now);
+            }
+            if let Some(min) = number("aria-valuemin") {
+                builder.set_min_numeric_value(min);
+            }
+            if let Some(max) = number("aria-valuemax") {
+                builder.set_max_numeric_value(max);
+            }
+            if let Some(text) = aria("aria-valuetext") {
+                builder.set_value(text);
+            }
+            // Stepped with the keys the widget handles (arrows), as browsers
+            // do for ARIA range widgets. Their value can't be set directly
+            // (the page owns it), so the platform reports it read-only.
+            if matches!(role, Role::Slider | Role::SpinButton)
+                && !disabled
+                && number("aria-valuenow").is_some()
+            {
+                builder.add_action(Action::Increment);
+                builder.add_action(Action::Decrement);
+            }
+        }
+        match aria("aria-orientation") {
+            Some("vertical") => builder.set_orientation(accesskit::Orientation::Vertical),
+            Some("horizontal") => builder.set_orientation(accesskit::Orientation::Horizontal),
+            _ => {}
+        }
+    }
+
     /// The element's accessible name: a subset of
     /// https://www.w3.org/TR/accname-1.2/ in priority order (`aria-labelledby`,
     /// `aria-label`, native labels such as `<label>` and `alt`, name from
@@ -426,6 +607,11 @@ fn role_from_name(name: &str) -> Option<Role> {
         "radio" => Some(Role::RadioButton),
         "scrollbar" => Some(Role::ScrollBar),
         "slider" => Some(Role::Slider),
+        "switch" => Some(Role::Switch),
+        "searchbox" => Some(Role::SearchInput),
+        "separator" => Some(Role::Splitter),
+        "meter" => Some(Role::Meter),
+        "none" | "presentation" => Some(Role::GenericContainer),
         "spinbutton" => Some(Role::SpinButton),
         "status" => Some(Role::Status),
         "tab" => Some(Role::Tab),
@@ -583,5 +769,110 @@ fn role_from_element_data(element_data: &ElementData) -> Option<Role> {
             }
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{Attribute, BaseDocument, DocumentConfig, EventDriver, NoopEventHandler, QualName, qual_name};
+    use accesskit::{Action, ActionData, ActionRequest, Node, NodeId as AxId, Toggled, TreeId};
+    use blitz_traits::node_id::NodeId;
+    use blitz_traits::shell::{ColorScheme, Viewport};
+
+    fn doc_with(elements: &[(&str, &[(&str, &str)])]) -> (BaseDocument, Vec<NodeId>) {
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        let root = doc.root_node().id;
+        let mut m = doc.mutate();
+        let html = m.create_element(qual_name!("html", html), vec![]);
+        let body = m.create_element(qual_name!("body", html), vec![]);
+        let mut ids = Vec::new();
+        for (tag, attrs) in elements {
+            let attrs = attrs
+                .iter()
+                .map(|(k, v)| Attribute {
+                    name: QualName::new(None, markup5ever::ns!(), markup5ever::LocalName::from(*k)),
+                    value: v.to_string(),
+                })
+                .collect();
+            let name = QualName::new(None, markup5ever::ns!(html), markup5ever::LocalName::from(*tag));
+            ids.push(m.create_element(name, attrs));
+        }
+        m.append_children(body, &ids);
+        m.append_children(html, &[body]);
+        m.append_children(root, &[html]);
+        drop(m);
+        doc.resolve(0.0);
+        (doc, ids)
+    }
+
+    fn ax_node(doc: &BaseDocument, id: NodeId) -> Node {
+        let tree = doc.build_accessibility_tree();
+        tree.nodes.into_iter().find(|(n, _)| n.0 == id.as_u64()).expect("node in the tree").1
+    }
+
+    fn act(doc: &mut BaseDocument, id: NodeId, action: Action, data: Option<ActionData>) -> bool {
+        let request = ActionRequest { action, target_tree: TreeId::ROOT, target_node: AxId(id.as_u64()), data };
+        EventDriver::new(doc, NoopEventHandler).handle_accessibility_action(&request)
+    }
+
+    /// Controls expose their state and the actions an assistive technology
+    /// can request, from the element and its ARIA attributes.
+    #[test]
+    fn states_and_actions() {
+        let (doc, ids) = doc_with(&[
+            ("input", &[("type", "checkbox"), ("checked", "")]),
+            ("button", &[("role", "switch"), ("aria-checked", "false")]),
+            ("button", &[("aria-pressed", "true")]),
+            ("button", &[("aria-expanded", "false"), ("aria-haspopup", "dialog")]),
+            ("input", &[("type", "text"), ("value", "abc")]),
+            ("div", &[("role", "slider"), ("tabindex", "0"), ("aria-valuenow", "5"), ("aria-valuemin", "0"), ("aria-valuemax", "10")]),
+            ("input", &[("type", "range"), ("min", "0"), ("max", "4"), ("value", "1")]),
+            ("button", &[("disabled", "")]),
+        ]);
+        let n: Vec<Node> = ids.iter().map(|&id| ax_node(&doc, id)).collect();
+
+        assert_eq!(n[0].toggled(), Some(Toggled::True), "native checkbox");
+        assert!(n[0].supports_action(Action::Click) && n[0].supports_action(Action::Focus));
+        assert_eq!(n[1].toggled(), Some(Toggled::False), "ARIA switch");
+        assert_eq!(n[2].toggled(), Some(Toggled::True), "toggle button (aria-pressed)");
+        assert_eq!(n[3].is_expanded(), Some(false));
+        assert!(n[3].supports_action(Action::Expand) && !n[3].supports_action(Action::Collapse));
+        assert_eq!(n[4].value(), Some("abc"));
+        assert!(n[4].supports_action(Action::SetValue), "editable text field");
+        assert_eq!((n[5].numeric_value(), n[5].min_numeric_value(), n[5].max_numeric_value()), (Some(5.0), Some(0.0), Some(10.0)));
+        assert!(n[5].supports_action(Action::Increment) && !n[5].supports_action(Action::SetValue), "ARIA slider: stepped, not set");
+        assert_eq!(n[6].numeric_value(), Some(1.0), "native range");
+        assert!(n[6].supports_action(Action::SetValue));
+        assert!(n[7].is_disabled() && !n[7].supports_action(Action::Click) && !n[7].supports_action(Action::Focus));
+    }
+
+    /// Requested actions do what the input they stand for does.
+    #[test]
+    fn actions_do_what_input_does() {
+        let (mut doc, ids) = doc_with(&[
+            ("input", &[("type", "checkbox")]),
+            ("input", &[("type", "text"), ("value", "abc")]),
+            ("input", &[("type", "range"), ("min", "0"), ("max", "4"), ("step", "0.5"), ("value", "1")]),
+            ("button", &[]),
+            ("button", &[("disabled", "")]),
+        ]);
+        assert!(act(&mut doc, ids[0], Action::Click, None));
+        assert_eq!(doc.nodes[ids[0]].element_data().unwrap().checkbox_input_checked(), Some(true), "a click checks it");
+
+        assert!(act(&mut doc, ids[1], Action::SetValue, Some(ActionData::Value("xyz".into()))));
+        let text = doc.nodes[ids[1]].element_data().unwrap().text_input_data().unwrap().editor.raw_text().to_owned();
+        assert_eq!(text, "xyz");
+
+        assert!(act(&mut doc, ids[2], Action::Increment, None));
+        assert_eq!(ax_node(&doc, ids[2]).numeric_value(), Some(1.5), "one step up");
+        assert!(act(&mut doc, ids[2], Action::SetValue, Some(ActionData::NumericValue(9.0))));
+        assert_eq!(ax_node(&doc, ids[2]).numeric_value(), Some(4.0), "clamped to max");
+
+        assert!(act(&mut doc, ids[3], Action::Focus, None));
+        assert_eq!(doc.get_focussed_node_id(), Some(ids[3]));
+        assert!(!act(&mut doc, ids[4], Action::Click, None), "disabled controls take no actions");
     }
 }

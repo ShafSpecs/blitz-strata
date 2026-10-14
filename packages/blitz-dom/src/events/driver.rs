@@ -31,9 +31,9 @@ impl EventHandler for NoopEventHandler {
 }
 
 pub struct EventDriver<'doc, Handler: EventHandler> {
-    doc: &'doc mut dyn Document,
+    pub(super) doc: &'doc mut dyn Document,
     handler: Handler,
-    queue: VecDeque<DomEvent>,
+    pub(super) queue: VecDeque<DomEvent>,
 }
 
 impl<'doc, Handler: EventHandler> EventDriver<'doc, Handler> {
@@ -345,7 +345,7 @@ impl<'doc, Handler: EventHandler> EventDriver<'doc, Handler> {
         self.process_queue();
     }
 
-    fn handle_pointer_event(
+    pub(super) fn handle_pointer_event(
         &mut self,
         target: NodeId,
         data: BlitzPointerEvent,
@@ -382,7 +382,7 @@ impl<'doc, Handler: EventHandler> EventDriver<'doc, Handler> {
         self.process_queue();
     }
 
-    fn process_queue(&mut self) {
+    pub(super) fn process_queue(&mut self) {
         while let Some(mut event) = self.queue.pop_front() {
             let event_state = self.run_handler_event(&mut event, EventState::default());
             if !event_state.is_cancelled() {
