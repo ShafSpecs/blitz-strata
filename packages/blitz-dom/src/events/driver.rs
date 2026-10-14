@@ -240,7 +240,15 @@ impl<'doc, Handler: EventHandler> EventDriver<'doc, Handler> {
             UiEvent::PointerDown(_) => hover_node_id,
             UiEvent::PointerCancel(_) => hover_node_id,
             UiEvent::PointerLeave(_) => hover_node_id,
-            UiEvent::Wheel(_) => hover_node_id,
+            // The element under the wheel. Hover can be stale here: content
+            // scrolls under a resting cursor, and a pointer that left the
+            // window clears it, but a wheel event carries its own position.
+            UiEvent::Wheel(ref w) => {
+                let doc = self.doc.inner();
+                doc.hit(w.coords.page_x, w.coords.page_y)
+                    .and_then(|h| doc.nearest_non_anonymous_ancestor(h.node_id))
+                    .or(hover_node_id)
+            }
             UiEvent::KeyUp(_) => focussed_node_id,
             UiEvent::KeyDown(_) => focussed_node_id,
             UiEvent::Ime(_) => focussed_node_id,
