@@ -33,7 +33,6 @@ pub(crate) enum Corner {
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[allow(clippy::enum_variant_names, reason = "Use CSS standard terminology")]
 pub(crate) enum CssBoxKind {
-    OutlineBox,
     BorderBox,
     PaddingBox,
     ContentBox,

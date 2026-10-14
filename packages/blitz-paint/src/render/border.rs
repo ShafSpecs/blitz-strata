@@ -10,7 +10,7 @@ use style::{
 
 use crate::{
     color::{ToColorColor as _, contrast_ratio},
-    kurbo_css::Edge,
+    kurbo_css::{CssBox, Edge, NonUniformRoundedRectRadii},
     render::{ElementCx, PhysicalTracks},
 };
 
@@ -612,20 +612,39 @@ impl ElementCx<'_, '_> {
             OutlineStyle::BorderStyle(style) => style,
         };
 
-        let path = match style {
-            BorderStyle::None | BorderStyle::Hidden => return,
-            BorderStyle::Solid => self.frame.outline(),
+        if matches!(style, BorderStyle::None | BorderStyle::Hidden) {
+            return;
+        }
+        // TODO: dotted, dashed, double and the 3D styles are drawn solid.
 
-            // TODO: Implement other border styles
-            BorderStyle::Inset
-            | BorderStyle::Groove
-            | BorderStyle::Outset
-            | BorderStyle::Ridge
-            | BorderStyle::Dotted
-            | BorderStyle::Dashed
-            | BorderStyle::Double => self.frame.outline(),
+        // The outline starts `outline-offset` beyond the border box (inside it
+        // when negative) and is `outline-width` thick. It follows the border
+        // radius, as browsers draw it: a rounded corner's radius grows with the
+        // distance from the border edge; a square corner stays square.
+        let width = self.frame.outline_width;
+        if width <= 0.0 {
+            return;
+        }
+        let offset = outline.outline_offset.to_f64_px() * self.scale;
+        let outer_box = self.frame.border_box.inflate(offset + width, offset + width);
+        if outer_box.width() <= 0.0 || outer_box.height() <= 0.0 {
+            return;
+        }
+        let grow = |r: Vec2| {
+            if r.x > 0.0 && r.y > 0.0 {
+                Vec2::new((r.x + offset + width).max(0.0), (r.y + offset + width).max(0.0))
+            } else {
+                Vec2::ZERO
+            }
         };
-
-        scene.fill(Fill::NonZero, self.transform, color, None, &path);
+        let radii = &self.frame.border_radii;
+        let outer_radii = NonUniformRoundedRectRadii {
+            top_left: grow(radii.top_left),
+            top_right: grow(radii.top_right),
+            bottom_right: grow(radii.bottom_right),
+            bottom_left: grow(radii.bottom_left),
+        };
+        let ring = CssBox::new(outer_box, Insets::uniform(width), Insets::ZERO, 0.0, outer_radii);
+        scene.fill(Fill::NonZero, self.transform, color, None, &ring.border_ring());
     }
 }
