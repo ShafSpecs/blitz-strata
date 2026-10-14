@@ -893,9 +893,11 @@ impl<'doc> DocumentMutator<'doc> {
             self.doc.shell_provider.set_window_title(title);
         }
 
-        // Add/Update inline stylesheets (<style> elements)
+        // Add/Update inline stylesheets (<style> elements). Only those in the
+        // document apply: one being built outside it (a framework renders
+        // into a fragment) is processed when it's inserted.
         for id in self.style_nodes.drain() {
-            if self.doc.get_node(id).is_some() {
+            if self.doc.get_node(id).is_some_and(|n| n.flags.is_in_document()) {
                 self.doc.process_style_element(id);
             }
         }
