@@ -902,7 +902,7 @@ pub(crate) fn handle_click(
 
 pub(crate) fn handle_wheel<F: FnMut(DomEvent)>(
     doc: &mut BaseDocument,
-    _: NodeId,
+    target: NodeId,
     event: BlitzWheelEvent,
     mut dispatch_event: F,
 ) {
@@ -911,8 +911,10 @@ pub(crate) fn handle_wheel<F: FnMut(DomEvent)>(
         BlitzWheelDelta::Pixels(x, y) => (x, y),
     };
 
+    // Scroll from the element the wheel turned over (the event's target),
+    // not whatever hover state says.
     let has_changed = doc.scroll_chain_by(
-        doc.get_hover_node_id(),
+        Some(target),
         scroll_x,
         scroll_y,
         &mut dispatch_event,
