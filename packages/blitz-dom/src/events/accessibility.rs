@@ -72,6 +72,26 @@ impl<Handler: EventHandler> EventDriver<'_, Handler> {
     /// (focus on press, then the click the release produces), aimed at the
     /// element itself rather than whatever is drawn over it.
     fn ax_click(&mut self, target: NodeId) -> bool {
+        // An option of a drop-down select (shown in its picker, or not): it's
+        // chosen, as a click on it in the picker would.
+        let option_of = {
+            let doc = self.doc.inner();
+            doc.nodes[target]
+                .element_data()
+                .is_some_and(|e| e.name.local == local_name!("option"))
+                .then(|| doc.drop_down_select_of(target))
+                .flatten()
+        };
+        if let Some(select) = option_of {
+            let mut doc = self.doc.inner_mut();
+            if doc.option_disabled(target) {
+                return false;
+            }
+            doc.close_drop_down();
+            let queue = &mut self.queue;
+            doc.choose_option(select, target, &mut |e| queue.push_back(e));
+            return true;
+        }
         let down = {
             let doc = self.doc.inner();
             if is_disabled(&doc, target) {

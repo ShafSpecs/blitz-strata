@@ -54,6 +54,8 @@ pub struct DocumentMutator<'doc> {
     title_node: Option<NodeId>,
     style_nodes: HashSet<NodeId>,
     form_nodes: HashSet<NodeId>,
+    /// Drop-down selects whose options or selection changed.
+    select_nodes: HashSet<NodeId>,
 
     /// Whether an element/attribute that affect animation status has been seen
     recompute_is_animating: bool,
@@ -83,6 +85,7 @@ impl DocumentMutator<'_> {
             title_node: None,
             style_nodes: HashSet::new(),
             form_nodes: HashSet::new(),
+            select_nodes: HashSet::new(),
             recompute_is_animating: false,
             mutations_occurred: false,
             #[cfg(feature = "autofocus")]
@@ -266,6 +269,7 @@ impl DocumentMutator<'_> {
     }
 
     pub fn set_attribute(&mut self, node_id: NodeId, name: QualName, value: &str) {
+        self.note_select(node_id);
         let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
         if node_is_in_document {
             self.doc.snapshot_node(node_id);
@@ -400,6 +404,7 @@ impl DocumentMutator<'_> {
     }
 
     pub fn clear_attribute(&mut self, node_id: NodeId, name: QualName) {
+        self.note_select(node_id);
         let node_is_in_document = self.doc.nodes[node_id].flags.is_in_document();
         if node_is_in_document {
             self.doc.snapshot_node(node_id);
@@ -901,6 +906,12 @@ impl<'doc> DocumentMutator<'doc> {
             }
         }
 
+        for id in self.select_nodes.drain() {
+            if self.doc.get_node(id).is_some() {
+                self.doc.refresh_select(id);
+            }
+        }
+
         #[cfg(feature = "autofocus")]
         if let Some(node_id) = self.node_to_autofocus.take() {
             if self.doc.get_node(node_id).is_some() {
@@ -1058,9 +1069,14 @@ impl<'doc> DocumentMutator<'doc> {
                 SpecialElementData::TableRoot(_) => {}
                 SpecialElementData::TextInput(_) => {}
                 SpecialElementData::CheckboxInput(_) => {}
+                SpecialElementData::Select(_) => {}
                 #[cfg(feature = "file-input")]
                 SpecialElementData::FileInput(_) => {}
                 SpecialElementData::None => {}
+            }
+            // A removed select's picker closes.
+            if doc.open_select == Some(node_id) {
+                doc.open_select = None;
             }
         });
 
@@ -1086,6 +1102,15 @@ impl<'doc> DocumentMutator<'doc> {
                 self.style_nodes.insert(node_id);
             }
             _ => {}
+        }
+        self.note_select(node_id);
+    }
+
+    /// A change in or under a drop-down select (its options, their text or
+    /// attributes) refreshes it at the flush.
+    fn note_select(&mut self, node_id: NodeId) {
+        if let Some(select) = self.doc.drop_down_select_of(node_id) {
+            self.select_nodes.insert(select);
         }
     }
 

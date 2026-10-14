@@ -85,6 +85,27 @@ impl BaseDocument {
             nodes.insert(node_id, (id, builder));
         }
 
+        // An open select's picker: its options, where they're drawn.
+        if let Some((select, picker)) = self.open_picker() {
+            for (i, row) in picker.rows.iter().enumerate().filter(|(_, r)| !r.group_label) {
+                let mut option = AccessKitNode::new(Role::ListBoxOption);
+                option.set_label(self.option_label(row.node));
+                let r = picker.row_rect(i);
+                option.set_bounds(Rect { x0: r.x0, y0: r.y0, x1: r.x1, y1: r.y1 });
+                option.set_selected(picker.highlighted == Some(i));
+                if row.disabled {
+                    option.set_disabled();
+                } else {
+                    option.add_action(Action::Click);
+                }
+                let id = NodeId(row.node.as_u64());
+                if let Some((_, parent)) = nodes.get_mut(&select) {
+                    parent.push_child(id);
+                }
+                nodes.insert(row.node, (id, option));
+            }
+        }
+
         let mut nodes: Vec<_> = nodes
             .into_iter()
             .map(|(_, (id, node))| (id, node))
@@ -186,7 +207,7 @@ impl BaseDocument {
                 builder.set_level(default_level);
             }
 
-            self.set_states_and_actions(element_data, role, &mut builder);
+            self.set_states_and_actions(node.id, element_data, role, &mut builder);
 
             builder.set_html_tag(name);
         } else if node.is_text_node() {
@@ -211,6 +232,7 @@ impl BaseDocument {
     /// ExpandCollapse, Value, RangeValue).
     fn set_states_and_actions(
         &self,
+        node_id: crate::NodeId,
         element: &ElementData,
         role: Role,
         builder: &mut AccessKitNode,
@@ -268,6 +290,17 @@ impl BaseDocument {
             }
         }
 
+        // A drop-down select: its value is the selected option's label; it
+        // expands to its picker.
+        if crate::is_drop_down(element) {
+            let label = self.selected_option(node_id).map(|o| self.option_label(o)).unwrap_or_default();
+            builder.set_value(label);
+            let open = self.open_select == Some(node_id);
+            builder.set_expanded(open);
+            if !disabled {
+                builder.add_action(if open { Action::Collapse } else { Action::Expand });
+            }
+        }
         if let Some(expanded) = aria("aria-expanded") {
             let expanded = expanded == "true";
             builder.set_expanded(expanded);

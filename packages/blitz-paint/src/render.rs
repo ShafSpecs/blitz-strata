@@ -3,6 +3,7 @@ mod border;
 mod box_shadow;
 mod clip_path;
 mod form_controls;
+mod select;
 mod mask;
 
 use std::cell::RefCell;
@@ -241,6 +242,9 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
             }),
             viewport_clip_rect,
         );
+
+        // An open select's picker, above the page.
+        self.draw_select_picker(scene);
 
         // Render debug overlay
         if self.dom.devtools().highlight_hover {
@@ -570,6 +574,7 @@ impl<'dom, 'a> BlitzDomPainter<'dom, 'a> {
                                 cx.draw_custom_widget(scene);
                                 cx.draw_sub_document(scene);
                                 cx.draw_input(scene);
+                                cx.draw_select(scene);
                                 cx.draw_text_input_text(scene, content_position);
                                 cx.draw_inline_layout(scene, content_position);
                                 cx.draw_marker(scene, content_position);

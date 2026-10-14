@@ -471,6 +471,27 @@ pub(crate) fn handle_pointerdown(
         return;
     }
 
+    // A drop-down select: a press focuses it and opens (or closes) its picker.
+    if button == MouseEventButton::Main
+        && let Some(select) = doc.drop_down_select_of(actual_target)
+        && !doc.nodes[select].element_data().is_some_and(|el| el.has_attr(local_name!("disabled")))
+    {
+        doc.clear_text_selection();
+        generate_focus_events(
+            doc,
+            &mut |doc| {
+                doc.set_focus_to(select);
+            },
+            dispatch_event,
+        );
+        if doc.open_select == Some(select) {
+            doc.close_drop_down();
+        } else {
+            doc.open_drop_down(select);
+        }
+        return;
+    }
+
     // Check what kind of element we're dealing with and extract needed info
     enum ClickTarget {
         TextInput {

@@ -70,6 +70,17 @@ pub(crate) fn handle_key_or_input_event<F: FnMut(DomEvent)>(
             return;
         }
 
+        // A focused drop-down select: keys open it or change its selection.
+        if let KeyboardOrTextInputEvent::KeyPress(key_event) = &event
+            && key_event.state.is_pressed()
+            && !key_event.modifiers.intersects(Modifiers::CONTROL | Modifiers::META)
+            && doc.nodes[node_id].element_data().is_some_and(crate::is_drop_down)
+        {
+            let alt = key_event.modifiers.contains(Modifiers::ALT);
+            doc.select_key(node_id, &key_event.key, alt, &mut dispatch_event);
+            return;
+        }
+
         // A focused range input: arrows step, Page Up/Down take a tenth of the
         // range, Home/End go to the ends.
         if let KeyboardOrTextInputEvent::KeyPress(key_event) = &event

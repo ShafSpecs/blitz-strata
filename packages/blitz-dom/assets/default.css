@@ -86,6 +86,26 @@ input[type="checkbox" i] {
     margin: 3px 3px 3px 4px;
 }
 
+/* A drop-down select draws its selected option's label and an arrow (Blitz
+ * paints both); it looks like the other form controls. */
+select {
+    display: inline-block;
+    box-sizing: border-box;
+    border: 1px solid #767676;
+    border-radius: 3px;
+    padding: 1px 4px;
+    background-color: white;
+    color: black;
+    font-size: 13.333px;
+    white-space: nowrap;
+    cursor: default;
+}
+
+select:disabled {
+    color: #6d6d6d;
+    border-color: rgba(118, 118, 118, 0.3);
+}
+
 input[type="radio" i] {
     margin: 3px 3px 0 5px;
 }

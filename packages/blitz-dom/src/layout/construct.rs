@@ -456,6 +456,12 @@ fn collect_layout_children_with_wrap(
                 return;
             }
         }
+        // A drop-down select draws its selected option's label itself; its
+        // options aren't laid out.
+        if tag_name == "select" && doc.nodes[container_node_id].element_data().is_some_and(crate::is_drop_down) {
+            doc.refresh_select(container_node_id);
+            return;
+        }
 
         #[cfg(feature = "svg")]
         if matches!(tag_name, "svg") {
