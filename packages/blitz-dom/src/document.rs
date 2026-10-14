@@ -320,6 +320,10 @@ pub struct BaseDocument {
     pub(crate) last_client_pointer_position: Option<taffy::Point<f32>>,
     /// The node which is currently focussed (if any)
     pub(crate) focus_node_id: Option<NodeId>,
+    /// The element that has captured the pointer (`setPointerCapture`): it
+    /// gets the pointer's move/up/cancel events until it releases it or the
+    /// button is released.
+    pub(crate) pointer_capture: Option<NodeId>,
     /// Whether the last user input was the keyboard rather than a pointer. Focus
     /// moved while it is (by the keyboard or by script) matches `:focus-visible`.
     pub(crate) keyboard_modality: bool,
@@ -349,6 +353,9 @@ pub struct BaseDocument {
     // TODO: collapse animating state into a bitflags
     /// Whether there are active CSS animations/transitions (so we should re-render every frame)
     pub(crate) has_active_animations: bool,
+    /// Animation and transition events from the last style passes, for the
+    /// embedder to dispatch ([`BaseDocument::take_animation_events`]).
+    pub(crate) animation_events: Vec<(NodeId, blitz_traits::events::DomEventData)>,
     /// Whether there is a `<canvas>` element in the DOM (so we should re-render every frame)
     pub(crate) has_canvas: bool,
     /// Whether there are subdocuments that are animating (so we should re-render every frame)
@@ -516,9 +523,11 @@ impl BaseDocument {
             focus_node_id: None,
             // Script focus before any user input shows a focus ring, as in browsers
             keyboard_modality: true,
+            pointer_capture: None,
             active_node_id: None,
             mousedown_node_id: None,
             has_active_animations: false,
+            animation_events: Vec::new(),
             subdoc_is_animating: false,
             has_canvas: false,
             sub_document_nodes: HashSet::new(),
@@ -988,6 +997,12 @@ impl BaseDocument {
             self.drag_mode = DragMode::None;
         }
         self.scrollbar_activity.remove(&node_id);
+        if self.pointer_capture == Some(node_id) {
+            self.pointer_capture = None;
+        }
+        // A removed control has no form; a removed form owns no controls.
+        self.controls_to_form.remove(&node_id);
+        self.controls_to_form.retain(|_, form| *form != node_id);
     }
 
     pub(crate) fn drop_node_ignoring_parent(&mut self, node_id: NodeId) -> Option<Node> {
@@ -1757,6 +1772,30 @@ impl BaseDocument {
         true
     }
 
+    pub fn has_animation_events(&self) -> bool {
+        !self.animation_events.is_empty()
+    }
+
+    /// Animation and transition events (animationstart, animationend,
+    /// animationcancel, transitionend, transitioncancel) since the last call,
+    /// in order, for the embedder to dispatch to the page.
+    pub fn take_animation_events(&mut self) -> Vec<blitz_traits::events::DomEvent> {
+        std::mem::take(&mut self.animation_events)
+            .into_iter()
+            .filter(|(id, _)| self.nodes.get(*id).is_some())
+            .map(|(id, data)| blitz_traits::events::DomEvent::new(id, data))
+            .collect()
+    }
+
+    /// Captures the pointer for `node` (`None` releases it).
+    pub fn set_pointer_capture(&mut self, node: Option<NodeId>) {
+        self.pointer_capture = node;
+    }
+
+    pub fn pointer_capture(&self) -> Option<NodeId> {
+        self.pointer_capture
+    }
+
     /// Record which kind of input the user used last (for `:focus-visible`). Keyboard
     /// use also makes an already-focused element match `:focus-visible`.
     pub fn set_keyboard_modality(&mut self, keyboard: bool) {
@@ -2345,6 +2384,9 @@ impl BaseDocument {
         }
 
         self.get_node(node_id)?;
+        if let Some(rect) = self.transformed_client_rect(node_id) {
+            return Some(rect);
+        }
         let (pos, layout) = self.physical_unrounded_geometry(node_id);
         let size = layout.size;
 
@@ -2353,6 +2395,58 @@ impl BaseDocument {
             y: snap_to_layout_unit(pos.y as f64 - self.viewport_scroll().y),
             width: snap_to_layout_unit(size.width as f64),
             height: snap_to_layout_unit(size.height as f64),
+        })
+    }
+
+    /// The client rect when the node or one of its containing blocks has a CSS
+    /// transform: the bounding box of the border box's corners mapped through
+    /// each transform on the way up (as browsers report it). `None` when
+    /// nothing on the way is transformed.
+    fn transformed_client_rect(&self, node_id: NodeId) -> Option<BoundingRect> {
+        let mut chain = Vec::new();
+        let mut current = Some(node_id);
+        let mut any = false;
+        while let Some(id) = current {
+            let node = &self.nodes[id];
+            any |= node.transform().is_some();
+            chain.push(id);
+            current = node.containing_block();
+        }
+        if !any {
+            return None;
+        }
+        let scale = self.viewport.scale_f64();
+        let size = self.nodes[node_id].unrounded_layout().size;
+        let mut pts = [
+            kurbo::Point::new(0.0, 0.0),
+            kurbo::Point::new(size.width as f64, 0.0),
+            kurbo::Point::new(0.0, size.height as f64),
+            kurbo::Point::new(size.width as f64, size.height as f64),
+        ];
+        for (i, &id) in chain.iter().enumerate() {
+            let node = &self.nodes[id];
+            if let Some(t) = node.transform().as_deref() {
+                // Stored for device pixels (translation scaled): apply in CSS px.
+                let [a, b, c, d, e, f] = t.as_coeffs();
+                let css = kurbo::Affine::new([a, b, c, d, e / scale, f / scale]);
+                for p in &mut pts {
+                    *p = css * *p;
+                }
+            }
+            let loc = node.unrounded_layout().location;
+            let scroll = chain.get(i + 1).map(|&p| *self.nodes[p].scroll_offset()).unwrap_or(crate::util::Point { x: 0.0, y: 0.0 });
+            for p in &mut pts {
+                p.x += loc.x as f64 - scroll.x;
+                p.y += loc.y as f64 - scroll.y;
+            }
+        }
+        let (x0, x1) = pts.iter().fold((f64::MAX, f64::MIN), |(lo, hi), p| (lo.min(p.x), hi.max(p.x)));
+        let (y0, y1) = pts.iter().fold((f64::MAX, f64::MIN), |(lo, hi), p| (lo.min(p.y), hi.max(p.y)));
+        Some(BoundingRect {
+            x: snap_to_layout_unit(x0 - self.viewport_scroll().x),
+            y: snap_to_layout_unit(y0 - self.viewport_scroll().y),
+            width: snap_to_layout_unit(x1 - x0),
+            height: snap_to_layout_unit(y1 - y0),
         })
     }
 

@@ -154,6 +154,12 @@ pub enum DomEventKind {
     FocusIn,
     FocusOut,
 
+    AnimationStart,
+    AnimationEnd,
+    AnimationCancel,
+    TransitionEnd,
+    TransitionCancel,
+
     AppleStandardKeybinding,
 }
 impl DomEventKind {
@@ -204,6 +210,12 @@ impl FromStr for DomEventKind {
             "blur" => Ok(Self::Blur),
             "focusin" => Ok(Self::FocusIn),
             "focusout" => Ok(Self::FocusOut),
+
+            "animationstart" => Ok(Self::AnimationStart),
+            "animationend" => Ok(Self::AnimationEnd),
+            "animationcancel" => Ok(Self::AnimationCancel),
+            "transitionend" => Ok(Self::TransitionEnd),
+            "transitioncancel" => Ok(Self::TransitionCancel),
             _ => Err(()),
         }
     }
@@ -252,7 +264,25 @@ pub enum DomEventData {
     FocusIn(BlitzFocusEvent),
     FocusOut(BlitzFocusEvent),
 
+    /// CSS animations and transitions (the animation's name, or the
+    /// transitioned property).
+    AnimationStart(BlitzAnimationEvent),
+    AnimationEnd(BlitzAnimationEvent),
+    AnimationCancel(BlitzAnimationEvent),
+    TransitionEnd(BlitzAnimationEvent),
+    TransitionCancel(BlitzAnimationEvent),
+
     AppleStandardKeybinding(SmolStr),
+}
+
+/// An `AnimationEvent` or `TransitionEvent`.
+#[derive(Clone, Debug)]
+pub struct BlitzAnimationEvent {
+    /// The animation's name (`animationName`), or the transitioned property
+    /// (`propertyName`).
+    pub name: String,
+    /// Seconds the animation or transition had run (`elapsedTime`).
+    pub elapsed: f64,
 }
 impl DomEventData {
     pub fn discriminant(&self) -> u8 {
@@ -306,6 +336,11 @@ impl DomEventData {
             Self::Blur { .. } => "blur",
             Self::FocusIn { .. } => "focusin",
             Self::FocusOut { .. } => "focusout",
+            Self::AnimationStart { .. } => "animationstart",
+            Self::AnimationEnd { .. } => "animationend",
+            Self::AnimationCancel { .. } => "animationcancel",
+            Self::TransitionEnd { .. } => "transitionend",
+            Self::TransitionCancel { .. } => "transitioncancel",
 
             Self::AppleStandardKeybinding { .. } => "applekeybinding",
         }
@@ -352,6 +387,11 @@ impl DomEventData {
             Self::Blur { .. } => DomEventKind::Blur,
             Self::FocusIn { .. } => DomEventKind::FocusIn,
             Self::FocusOut { .. } => DomEventKind::FocusOut,
+            Self::AnimationStart { .. } => DomEventKind::AnimationStart,
+            Self::AnimationEnd { .. } => DomEventKind::AnimationEnd,
+            Self::AnimationCancel { .. } => DomEventKind::AnimationCancel,
+            Self::TransitionEnd { .. } => DomEventKind::TransitionEnd,
+            Self::TransitionCancel { .. } => DomEventKind::TransitionCancel,
 
             Self::AppleStandardKeybinding { .. } => DomEventKind::AppleStandardKeybinding,
         }
@@ -398,6 +438,11 @@ impl DomEventData {
             Self::Blur { .. } => false,
             Self::FocusIn { .. } => false,
             Self::FocusOut { .. } => false,
+            Self::AnimationStart { .. } => false,
+            Self::AnimationEnd { .. } => false,
+            Self::AnimationCancel { .. } => false,
+            Self::TransitionEnd { .. } => false,
+            Self::TransitionCancel { .. } => false,
 
             Self::AppleStandardKeybinding { .. } => true,
         }
@@ -444,6 +489,11 @@ impl DomEventData {
             Self::Blur { .. } => false,
             Self::FocusIn { .. } => true,
             Self::FocusOut { .. } => true,
+            Self::AnimationStart { .. } => true,
+            Self::AnimationEnd { .. } => true,
+            Self::AnimationCancel { .. } => true,
+            Self::TransitionEnd { .. } => true,
+            Self::TransitionCancel { .. } => true,
 
             Self::AppleStandardKeybinding { .. } => false,
         }

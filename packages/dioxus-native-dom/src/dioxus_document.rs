@@ -330,6 +330,14 @@ impl EventHandler for DioxusEventHandler<'_> {
 
             // AppleStandardKeybinding events are not exposed to script
             DomEventData::AppleStandardKeybinding(_) => None,
+
+            // TODO: animation and transition events (convert_animation_data
+            // isn't implemented yet)
+            DomEventData::AnimationStart(_)
+            | DomEventData::AnimationEnd(_)
+            | DomEventData::AnimationCancel(_)
+            | DomEventData::TransitionEnd(_)
+            | DomEventData::TransitionCancel(_) => None,
         };
 
         let Some(event_data) = event_data else {
