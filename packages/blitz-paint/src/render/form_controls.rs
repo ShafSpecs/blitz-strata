@@ -1,5 +1,5 @@
 use super::ElementCx;
-use crate::color::{Color, ToColorColor as _};
+use crate::color::Color;
 use anyrender::PaintScene;
 use blitz_dom::local_name;
 use kurbo::{Affine, BezPath, Cap, Circle, Join, Point, RoundedRect, Stroke, Vec2};
@@ -27,17 +27,20 @@ impl ElementCx<'_, '_> {
         let type_attr = self.node.attr(local_name!("type"));
         let disabled = self.node.attr(local_name!("disabled")).is_some();
 
-        // TODO this should be coming from css accent-color, but I couldn't find how to retrieve it
+        // accent-color isn't available from Stylo's servo build: the default
+        // accent, as Chromium's (and as the range input uses).
         let accent_color = if disabled {
             Color::from_rgba8(209, 209, 209, 255)
         } else {
-            self.style.clone_color().as_srgb_color()
+            Color::from_rgba8(0, 117, 255, 255)
         };
 
+        // The control fills its border box: the drawing below is laid out
+        // for a 20px box.
         let width = self.frame.border_box.width();
         let height = self.frame.border_box.height();
         let min_dimension = width.min(height);
-        let scale = (min_dimension - 4.0).max(0.0) / 16.0;
+        let scale = min_dimension / 20.0;
 
         let frame = self.frame.border_box.to_rounded_rect(scale * 2.0);
 
@@ -109,8 +112,9 @@ fn draw_checkbox(
 
         scene.stroke(&style, transform, Color::WHITE, None, &path);
     } else {
+        // Unchecked: a grey outline, as Chromium's.
         scene.fill(Fill::NonZero, transform, Color::WHITE, None, &frame);
-        scene.stroke(&Stroke::default(), transform, accent_color, None, &frame);
+        scene.stroke(&Stroke::default(), transform, Color::from_rgba8(118, 118, 118, 255), None, &frame);
     }
 }
 

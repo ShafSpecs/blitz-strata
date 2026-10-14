@@ -3241,6 +3241,67 @@ mod hover_invalidation_tests {
         );
     }
 
+    /// Checkboxes and radios are sized by their border box, with no padding
+    /// or border of their own: 13px by default, and exactly the author's
+    /// width and height when given (with or without `appearance: none`).
+    /// They draw their native control unless `appearance: none`.
+    #[test]
+    fn checkbox_and_radio_use_border_box_sizes() {
+        // HTML elements: the default UA sheet's rules are in the XHTML namespace.
+        let mut doc = BaseDocument::new(DocumentConfig {
+            viewport: Some(Viewport::new(400, 300, 1.0, ColorScheme::Light)),
+            ..Default::default()
+        });
+        let root_id = doc.root_node().id;
+        let attr = |name: QualName, value: &str| Attribute {
+            name,
+            value: value.to_string(),
+        };
+        let mut mutator = doc.mutate();
+        let html = mutator.create_element(qual_name!("html", html), vec![]);
+        let body = mutator.create_element(qual_name!("body", html), vec![attr(qual_name!("style"), "margin:0")]);
+        // A flex row: box sizing only, independent of inline (font) layout.
+        let row = mutator.create_element(
+            qual_name!("div", html),
+            vec![attr(qual_name!("style"), "display:flex;align-items:flex-start")],
+        );
+        let mut inputs = Vec::new();
+        for (ty, style) in [
+            ("checkbox", ""),
+            ("radio", ""),
+            ("checkbox", "appearance:none;width:18px;height:18px;border:2px solid black"),
+            ("radio", "width:18px;height:18px;border:2px solid black"),
+        ] {
+            let input = mutator.create_element(
+                qual_name!("input", html),
+                vec![attr(qual_name!("type"), ty), attr(qual_name!("style"), style)],
+            );
+            inputs.push(input);
+        }
+        mutator.append_children(row, &inputs);
+        mutator.append_children(body, &[row]);
+        mutator.append_children(html, &[body]);
+        mutator.append_children(root_id, &[html]);
+        drop(mutator);
+        doc.resolve(0.0);
+
+        let size = |id: NodeId| {
+            let l = doc.nodes[id].final_layout();
+            (l.size.width, l.size.height, l.padding.left, l.border.left)
+        };
+        assert_eq!(size(inputs[0]), (13.0, 13.0, 0.0, 0.0), "default checkbox");
+        assert_eq!(size(inputs[1]), (13.0, 13.0, 0.0, 0.0), "default radio");
+        assert_eq!(size(inputs[2]), (18.0, 18.0, 0.0, 2.0), "styled checkbox");
+        assert_eq!(size(inputs[3]), (18.0, 18.0, 0.0, 2.0), "styled radio");
+
+        // The native control is drawn unless the author opts out.
+        let appearance = |id: NodeId| doc.nodes[id].primary_styles().unwrap().get_box().clone_appearance();
+        use style::values::specified::box_::Appearance;
+        assert_ne!(appearance(inputs[0]), Appearance::None, "default checkbox draws its control");
+        assert_ne!(appearance(inputs[3]), Appearance::None, "a sized radio still draws its control");
+        assert_eq!(appearance(inputs[2]), Appearance::None, "appearance: none");
+    }
+
     /// Toggling a checkbox must invalidate `:checked`-dependent styles.
     #[test]
     fn checkbox_toggle_updates_checked_styles() {
