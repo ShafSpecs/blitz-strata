@@ -167,6 +167,74 @@ impl<'doc, Handler: EventHandler> EventDriver<'doc, Handler> {
     }
 
     pub fn handle_ui_event(&mut self, event: UiEvent) {
+        // An open select's picker takes the pointer and the keyboard, as the
+        // separate popup a browser shows would.
+        if self.doc.inner().open_select.is_some() && self.handle_picker_event(&event) {
+            self.process_queue();
+            self.close_picker_without_focus();
+            return;
+        }
+        self.handle_ui_event_inner(event);
+        self.close_picker_without_focus();
+    }
+
+    /// A picker stays open only while its select has focus.
+    fn close_picker_without_focus(&mut self) {
+        let mut doc = self.doc.inner_mut();
+        if let Some(select) = doc.open_select
+            && doc.focus_node_id != Some(select)
+        {
+            doc.close_drop_down();
+        }
+    }
+
+    /// Input while a select's picker is open. Returns whether the picker used
+    /// it (the page doesn't see it).
+    fn handle_picker_event(&mut self, event: &UiEvent) -> bool {
+        let Self { doc, queue, .. } = self;
+        let mut doc = doc.inner_mut();
+        let mut dispatch = |e: DomEvent| queue.push_back(e);
+        let at = |c: &PointerCoords| (c.client_x as f64, c.client_y as f64);
+        match event {
+            UiEvent::PointerMove(e) => {
+                let (x, y) = at(&e.coords);
+                doc.picker_hover(x, y)
+            }
+            UiEvent::PointerDown(e) => {
+                let (x, y) = at(&e.coords);
+                if !doc.open_picker().is_some_and(|(_, p)| p.rect.contains(kurbo::Point::new(x, y))) {
+                    // A press elsewhere closes the picker; a press on the
+                    // select itself only that.
+                    doc.close_drop_down();
+                }
+                true
+            }
+            UiEvent::PointerUp(e) => {
+                let (x, y) = at(&e.coords);
+                doc.picker_release(x, y, &mut dispatch);
+                doc.unactive_node();
+                doc.set_pointer_capture(None);
+                true
+            }
+            UiEvent::Wheel(e) => {
+                let (x, y) = at(&e.coords);
+                let dy = match e.delta {
+                    blitz_traits::events::BlitzWheelDelta::Lines(_, y) => -y * 20.0,
+                    blitz_traits::events::BlitzWheelDelta::Pixels(_, y) => -y,
+                };
+                if !doc.picker_scroll(x, y, dy) {
+                    doc.close_drop_down();
+                    return false;
+                }
+                true
+            }
+            UiEvent::KeyDown(e) => doc.picker_key(&e.key, e.modifiers.contains(Modifiers::ALT), &mut dispatch),
+            UiEvent::KeyUp(_) => true,
+            _ => false,
+        }
+    }
+
+    fn handle_ui_event_inner(&mut self, event: UiEvent) {
         let doc = self.doc.inner();
 
         // A non-hovering pointer (finger) ends hover once it is lifted or cancelled

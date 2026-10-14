@@ -54,6 +54,7 @@ mod layout;
 mod mutator;
 mod query_selector;
 mod range_input;
+mod select;
 mod resolve;
 /// Computation of resolved CSS property values (`getComputedStyle()`)
 mod resolved_style;
@@ -161,3 +162,7 @@ pub fn build_single_font_ctx(font_data: &[u8]) -> FontContext {
 }
 
 pub use range_input::{RangeState, THUMB_SIZE as RANGE_THUMB_SIZE};
+pub use select::{
+    PICKER_INDENT, PICKER_PADDING, Picker, PickerRow, SelectData, arrow_width as select_arrow_width,
+    is_drop_down,
+};

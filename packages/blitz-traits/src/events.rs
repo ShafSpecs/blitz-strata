@@ -164,6 +164,8 @@ pub enum DomEventKind {
     CompositionUpdate,
     CompositionEnd,
 
+    Change,
+
     AppleStandardKeybinding,
 }
 impl DomEventKind {
@@ -224,6 +226,8 @@ impl FromStr for DomEventKind {
             "compositionstart" => Ok(Self::CompositionStart),
             "compositionupdate" => Ok(Self::CompositionUpdate),
             "compositionend" => Ok(Self::CompositionEnd),
+
+            "change" => Ok(Self::Change),
             _ => Err(()),
         }
     }
@@ -285,6 +289,9 @@ pub enum DomEventData {
     CompositionStart(BlitzCompositionEvent),
     CompositionUpdate(BlitzCompositionEvent),
     CompositionEnd(BlitzCompositionEvent),
+
+    /// A form control's value was committed (a select's option chosen).
+    Change(BlitzInputEvent),
 
     AppleStandardKeybinding(SmolStr),
 }
@@ -366,6 +373,7 @@ impl DomEventData {
             Self::CompositionStart { .. } => "compositionstart",
             Self::CompositionUpdate { .. } => "compositionupdate",
             Self::CompositionEnd { .. } => "compositionend",
+            Self::Change { .. } => "change",
 
             Self::AppleStandardKeybinding { .. } => "applekeybinding",
         }
@@ -420,6 +428,7 @@ impl DomEventData {
             Self::CompositionStart { .. } => DomEventKind::CompositionStart,
             Self::CompositionUpdate { .. } => DomEventKind::CompositionUpdate,
             Self::CompositionEnd { .. } => DomEventKind::CompositionEnd,
+            Self::Change { .. } => DomEventKind::Change,
 
             Self::AppleStandardKeybinding { .. } => DomEventKind::AppleStandardKeybinding,
         }
@@ -474,6 +483,7 @@ impl DomEventData {
             Self::CompositionStart { .. } => true,
             Self::CompositionUpdate { .. } => false,
             Self::CompositionEnd { .. } => false,
+            Self::Change { .. } => false,
 
             Self::AppleStandardKeybinding { .. } => true,
         }
@@ -528,6 +538,7 @@ impl DomEventData {
             Self::CompositionStart { .. } => true,
             Self::CompositionUpdate { .. } => true,
             Self::CompositionEnd { .. } => true,
+            Self::Change { .. } => true,
 
             Self::AppleStandardKeybinding { .. } => false,
         }

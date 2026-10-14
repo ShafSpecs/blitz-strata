@@ -337,6 +337,8 @@ pub struct BaseDocument {
     /// Whether the last user input was the keyboard rather than a pointer. Focus
     /// moved while it is (by the keyboard or by script) matches `:focus-visible`.
     pub(crate) keyboard_modality: bool,
+    /// The drop-down select whose picker is open.
+    pub(crate) open_select: Option<NodeId>,
     /// The node which is currently active (if any)
     pub(crate) active_node_id: Option<NodeId>,
     /// The node which recieved a mousedown event (if any)
@@ -533,6 +535,7 @@ impl BaseDocument {
             focus_node_id: None,
             // Script focus before any user input shows a focus ring, as in browsers
             keyboard_modality: true,
+            open_select: None,
             pointer_capture: None,
             active_node_id: None,
             mousedown_node_id: None,
