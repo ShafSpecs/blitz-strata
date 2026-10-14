@@ -534,6 +534,15 @@ impl<Rend: WindowRenderer> View<Rend> {
         self.accessibility.update_tree(&inner);
     }
 
+    /// An action requested by an assistive technology: the document carries
+    /// it out, then the tree reflects the result.
+    #[cfg(feature = "accessibility")]
+    pub fn handle_accessibility_action(&mut self, request: &accesskit::ActionRequest) {
+        self.doc.handle_accessibility_action(request);
+        self.build_accessibility_tree();
+        self.request_redraw();
+    }
+
     #[cfg(target_arch = "wasm32")]
     const RESIZE_DEBOUNCE_MS: u32 = 100;
 

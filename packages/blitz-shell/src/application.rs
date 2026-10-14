@@ -84,8 +84,8 @@ impl<Rend: WindowRenderer> BlitzApplication<Rend> {
                         accesskit_xplat::WindowEvent::AccessibilityDeactivated => {
                             // TODO
                         }
-                        accesskit_xplat::WindowEvent::ActionRequested(_req) => {
-                            // TODO
+                        accesskit_xplat::WindowEvent::ActionRequested(req) => {
+                            window.handle_accessibility_action(req);
                         }
                     }
                 }

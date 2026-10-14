@@ -195,6 +195,16 @@ pub trait Document: Any + 'static {
         driver.handle_ui_event(event);
     }
 
+    /// Carry out an action requested by an assistive technology (focus,
+    /// click, set value, increment, ...). Embedders that run script handle it
+    /// with their own [`EventHandler`] so the page sees the events.
+    #[cfg(feature = "accessibility")]
+    fn handle_accessibility_action(&mut self, request: &accesskit::ActionRequest) {
+        let mut doc = self.inner_mut();
+        let mut driver = EventDriver::new(&mut *doc, NoopEventHandler);
+        driver.handle_accessibility_action(request);
+    }
+
     /// Poll any pending async operations, and flush changes to the underlying [`BaseDocument`]
     fn poll(&mut self, task_context: Option<TaskContext>) -> bool {
         // Default implementation does nothing

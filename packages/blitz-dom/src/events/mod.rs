@@ -1,3 +1,5 @@
+#[cfg(feature = "accessibility")]
+mod accessibility;
 mod driver;
 mod focus;
 mod ime;

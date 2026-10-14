@@ -172,6 +172,25 @@ impl TextInputData {
         }
     }
 
+    /// Replaces the whole text, as an edit (an assistive technology setting
+    /// the value): one undo step, the caret at the end. Returns whether the
+    /// text changed.
+    pub fn replace_all(
+        &mut self,
+        font_ctx: &mut FontContext,
+        layout_ctx: &mut LayoutContext<TextBrush>,
+        text: &str,
+    ) -> bool {
+        if self.editor.raw_text() == text {
+            return false;
+        }
+        self.history.record(EditKind::Other, &self.editor);
+        let mut driver = self.editor.driver(font_ctx, layout_ctx);
+        driver.select_all();
+        driver.insert_or_replace_selection(text);
+        true
+    }
+
     /// Recompute [`Self::scroll_offset`] so that the caret stays visible within the input's
     /// content box.
     ///
