@@ -75,6 +75,60 @@ pub struct TextInputData {
     /// The `placeholder` attribute's text, laid out with the `::placeholder`
     /// style. Painted while the input is empty.
     pub placeholder: Option<PlaceholderLayout>,
+    /// Undo and redo (Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z).
+    pub history: EditHistory,
+}
+
+/// A text input's undo history: the text and selection before each group of
+/// edits. Consecutive edits of one kind (typing, or deleting) with no caret
+/// move in between are one step, as in browsers; a paste, cut or line break
+/// is a step of its own. Setting the value from script clears it.
+#[derive(Default)]
+pub struct EditHistory {
+    undo: Vec<(String, parley::Selection)>,
+    redo: Vec<(String, parley::Selection)>,
+    group: Option<EditKind>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum EditKind {
+    Typing,
+    Deleting,
+    Other,
+}
+
+/// Undo steps kept per input.
+const MAX_UNDO: usize = 100;
+
+impl EditHistory {
+    /// Call before an edit of `kind`.
+    fn record(&mut self, kind: EditKind, editor: &parley::PlainEditor<TextBrush>) {
+        if kind == EditKind::Other || self.group != Some(kind) {
+            if self.undo.len() >= MAX_UNDO {
+                self.undo.remove(0);
+            }
+            self.undo.push((editor.raw_text().to_owned(), editor.raw_selection().clone()));
+        }
+        self.redo.clear();
+        self.group = (kind != EditKind::Other).then_some(kind);
+    }
+
+    /// A caret move or selection change ends the current group.
+    pub fn break_group(&mut self) {
+        self.group = None;
+    }
+
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
 }
 
 /// The laid-out `placeholder` text of a text input.
@@ -101,6 +155,7 @@ impl TextInputData {
             is_multiline,
             scroll_offset: 0.0,
             placeholder: None,
+            history: EditHistory::default(),
         }
     }
 
@@ -113,6 +168,7 @@ impl TextInputData {
         if self.editor.text() != text {
             self.editor.set_text(text);
             self.editor.driver(font_ctx, layout_ctx).refresh_layout();
+            self.history.clear();
         }
     }
 
@@ -229,6 +285,59 @@ impl TextInputData {
         let action_mod = mods.contains(ACTION_MOD);
 
         let is_multiline = self.is_multiline;
+
+        // Undo and redo
+        if let Key::Character(c) = &event.key
+            && action_mod
+            && !mods.contains(Modifiers::ALT)
+        {
+            let c = c.to_lowercase();
+            let (from, to) = match (c.as_str(), shift) {
+                ("z", false) => (&mut self.history.undo, &mut self.history.redo),
+                ("z", true) | ("y", false) => (&mut self.history.redo, &mut self.history.undo),
+                _ => return self.apply_editing_key(font_ctx, layout_ctx, shell_provider, event, is_multiline),
+            };
+            let Some((text, selection)) = from.pop() else {
+                return None;
+            };
+            to.push((self.editor.raw_text().to_owned(), self.editor.raw_selection().clone()));
+            self.history.group = None;
+            self.editor.set_text(&text);
+            let mut driver = self.editor.driver(font_ctx, layout_ctx);
+            driver.refresh_layout();
+            driver.set_selection(selection);
+            return Some(GeneratedTextInputEvent::Input);
+        }
+        self.apply_editing_key(font_ctx, layout_ctx, shell_provider, event, is_multiline)
+    }
+
+    fn apply_editing_key(
+        &mut self,
+        font_ctx: &mut FontContext,
+        layout_ctx: &mut LayoutContext<TextBrush>,
+        shell_provider: &dyn ShellProvider,
+        event: BlitzKeyEvent,
+        is_multiline: bool,
+    ) -> Option<GeneratedTextInputEvent> {
+        let mods = event.modifiers;
+        let shift = mods.contains(Modifiers::SHIFT);
+        let action_mod = mods.contains(ACTION_MOD);
+
+        // Which kind of edit the key makes (for undo grouping), if any.
+        let kind = match &event.key {
+            Key::Character(c) if action_mod && matches!(c.to_lowercase().as_str(), "x" | "v") => Some(EditKind::Other),
+            Key::Character(c) if c == "
+" => is_multiline.then_some(EditKind::Other),
+            Key::Named(NamedKey::Enter) => is_multiline.then_some(EditKind::Other),
+            Key::Named(NamedKey::Delete) | Key::Named(NamedKey::Backspace) => Some(EditKind::Deleting),
+            Key::Character(_) if !mods.contains(Modifiers::CONTROL) && !mods.contains(Modifiers::SUPER) => Some(EditKind::Typing),
+            _ => None,
+        };
+        match kind {
+            Some(kind) => self.history.record(kind, &self.editor),
+            None => self.history.break_group(),
+        }
+
         let editor = &mut self.editor;
         let mut driver = editor.driver(font_ctx, layout_ctx);
         match event.key {
