@@ -35,7 +35,9 @@ impl BaseDocument {
     ///
     /// <https://html.spec.whatwg.org/multipage/form-control-infrastructure.html#reset-the-form-owner>
     pub fn reset_form_owner(&mut self, node_id: NodeId) {
-        let node = &self.nodes[node_id];
+        let Some(node) = self.get_node(node_id) else {
+            return;
+        };
         let Some(element) = node.element_data() else {
             return;
         };

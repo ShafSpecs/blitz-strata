@@ -102,6 +102,11 @@ impl Iterator for AncestorTraverser<'_> {
 impl BaseDocument {
     /// Collect the nodes into a chain by traversing upwards
     pub fn node_chain(&self, node_id: NodeId) -> Vec<NodeId> {
+        // A node removed meanwhile (script can mutate the tree during
+        // dispatch) has no chain.
+        if self.get_node(node_id).is_none() {
+            return Vec::new();
+        }
         let mut chain = Vec::with_capacity(16);
         chain.push(node_id);
         chain.extend(

@@ -178,6 +178,7 @@ impl<'doc, Handler: EventHandler> EventDriver<'doc, Handler> {
 
         // A document the pointer has left has no say over the cursor
         let is_leave = matches!(event, UiEvent::PointerLeave(_));
+        let is_release = matches!(event, UiEvent::PointerUp(_) | UiEvent::PointerCancel(_));
 
         // Update document input state (hover, focus, active, etc)
         match &event {
@@ -225,7 +226,15 @@ impl<'doc, Handler: EventHandler> EventDriver<'doc, Handler> {
             _ => {}
         };
 
+        // A captured pointer's events go to the capturing element.
+        let capture = {
+            let doc = self.doc.inner();
+            doc.pointer_capture().filter(|&id| doc.get_node(id).is_some())
+        };
         let target = match event {
+            UiEvent::PointerMove(_) if capture.is_some() => capture,
+            UiEvent::PointerUp(_) if capture.is_some() => capture,
+            UiEvent::PointerCancel(_) if capture.is_some() => capture,
             UiEvent::PointerMove(_) => hover_node_id,
             UiEvent::PointerUp(_) => hover_node_id,
             UiEvent::PointerDown(_) => hover_node_id,
@@ -304,6 +313,11 @@ impl<'doc, Handler: EventHandler> EventDriver<'doc, Handler> {
                 self.process_queue();
             }
         };
+
+        // Releasing the button (or a cancel) releases a capture.
+        if is_release {
+            self.doc.inner_mut().set_pointer_capture(None);
+        }
 
         // Update document input state (hover, focus, active, etc)
         if let Some(event) = hover_end_event {
@@ -386,6 +400,9 @@ impl<'doc, Handler: EventHandler> EventDriver<'doc, Handler> {
         event: &mut DomEvent,
         initial_event_state: EventState,
     ) -> EventState {
+        if self.doc.inner().get_node(event.target).is_none() {
+            return initial_event_state;
+        }
         let chain = if event.bubbles {
             let doc = self.doc.inner();
             doc.node_chain(event.target)
@@ -433,6 +450,12 @@ impl<'doc, Handler: EventHandler> EventDriver<'doc, Handler> {
 
     fn run_default_action(&mut self, event: &mut DomEvent) {
         let mut doc = self.doc.inner_mut();
+        // The target may be gone: handlers can remove it (script mutates the
+        // tree during dispatch, as in browsers). A removed node has no
+        // default action.
+        if doc.get_node(event.target).is_none() {
+            return;
+        }
         doc.handle_dom_event(event, |new_evt| self.queue.push_back(new_evt));
     }
 }

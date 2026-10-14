@@ -406,6 +406,16 @@ impl<Rend: WindowRenderer> View<Rend> {
         let mut inner = self.doc.inner_mut();
         inner.resolve(animation_time);
 
+        // Animation events (animationend, transitionend, ...) go to the page
+        // now, so a handler that reacts (unmounting a closed popover, say)
+        // lands in this frame.
+        if inner.has_animation_events() {
+            drop(inner);
+            self.poll();
+            inner = self.doc.inner_mut();
+            inner.resolve(animation_time);
+        }
+
         // Unregister resources (e.g. textures) from dropped custom widget nodes
         #[cfg(feature = "custom-widget")]
         for id in inner.take_pending_resource_deallocations() {
