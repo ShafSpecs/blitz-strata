@@ -54,6 +54,15 @@ input {
     display: inline-block;
 }
 
+/* Form controls draw their native look unless the author sets appearance:
+ * none (CSS's initial value is none; browsers' UA sheets set auto). */
+input,
+button,
+select,
+textarea {
+    appearance: auto;
+}
+
 /* https://html.spec.whatwg.org/#hidden-elements */
 input[type="hidden" i] {
     display: none !important;
@@ -98,6 +107,21 @@ textarea {
 
 input:focus,
 textarea:focus {
+    outline: 2px solid #4D90FE;
+}
+
+input[type="range" i] {
+    width: 129px;
+    height: 16px;
+    margin: 2px;
+    padding: 0;
+    border: none;
+    background: none;
+    cursor: default;
+}
+
+/* Keyboard focus is visible on every element (browsers draw a focus ring) */
+:focus-visible {
     outline: 2px solid #4D90FE;
 }
 

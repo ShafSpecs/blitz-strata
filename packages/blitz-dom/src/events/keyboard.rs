@@ -70,6 +70,28 @@ pub(crate) fn handle_key_or_input_event<F: FnMut(DomEvent)>(
             return;
         }
 
+        // A focused range input: arrows step, Page Up/Down take a tenth of the
+        // range, Home/End go to the ends.
+        if let KeyboardOrTextInputEvent::KeyPress(key_event) = &event
+            && key_event.state.is_pressed()
+            && !key_event.modifiers.intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::META)
+            && let Some(range) = doc.nodes[node_id].element_data().and_then(crate::RangeState::of)
+        {
+            let value = match &key_event.key {
+                Key::ArrowRight | Key::ArrowUp => Some(range.value + range.small_step()),
+                Key::ArrowLeft | Key::ArrowDown => Some(range.value - range.small_step()),
+                Key::PageUp => Some(range.value + range.large_step()),
+                Key::PageDown => Some(range.value - range.large_step()),
+                Key::Home => Some(range.min),
+                Key::End => Some(range.max),
+                _ => None,
+            };
+            if let Some(value) = value {
+                doc.set_range_value(node_id, value, &mut dispatch_event);
+            }
+            return;
+        }
+
         let node = &mut doc.nodes[node_id];
         let Some(element_data) = node.element_data_mut() else {
             return;

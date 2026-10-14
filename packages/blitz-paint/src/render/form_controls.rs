@@ -11,6 +11,15 @@ impl ElementCx<'_, '_> {
         if self.node.local_name() != "input" {
             return;
         }
+        // `appearance: none`: the author styles the box; nothing of the
+        // native control is drawn.
+        if self.style.get_box().clone_appearance() == style::values::specified::box_::Appearance::None {
+            return;
+        }
+        if let Some(range) = blitz_dom::RangeState::of(self.element) {
+            self.draw_range(scene, &range);
+            return;
+        }
         let Some(checked) = self.element.checkbox_input_checked() else {
             return;
         };
@@ -42,6 +51,31 @@ impl ElementCx<'_, '_> {
             }
             _ => {}
         }
+    }
+}
+
+impl ElementCx<'_, '_> {
+    /// A range input: a 4px track across the content box, filled up to the
+    /// thumb (a 16px disc) in the accent colour.
+    fn draw_range(&self, scene: &mut impl PaintScene, range: &blitz_dom::RangeState) {
+        let disabled = self.node.attr(local_name!("disabled")).is_some();
+        // accent-color isn't available from Stylo's servo build: the default
+        // accent, as Chromium's.
+        let accent = if disabled { Color::from_rgba8(160, 160, 160, 255) } else { Color::from_rgba8(0, 117, 255, 255) };
+        let track_bg = Color::from_rgba8(128, 128, 128, 110);
+        let scale = self.scale;
+        let content = self.frame.content_box;
+        let thumb = blitz_dom::RANGE_THUMB_SIZE * scale;
+        let cy = content.y0 + content.height() / 2.0;
+        let left = content.x0 + thumb / 2.0;
+        let right = (content.x1 - thumb / 2.0).max(left);
+        let x = left + (right - left) * range.fraction();
+        let half = 2.0 * scale;
+        let track = kurbo::Rect::new(content.x0, cy - half, content.x1, cy + half).to_rounded_rect(half);
+        scene.fill(Fill::NonZero, self.transform, track_bg, None, &track);
+        let filled = kurbo::Rect::new(content.x0, cy - half, x, cy + half).to_rounded_rect(half);
+        scene.fill(Fill::NonZero, self.transform, accent, None, &filled);
+        scene.fill(Fill::NonZero, self.transform, accent, None, &Circle::new((x, cy), thumb / 2.0));
     }
 }
 

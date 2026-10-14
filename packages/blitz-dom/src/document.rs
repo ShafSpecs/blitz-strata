@@ -79,8 +79,30 @@ use thread_local::ThreadLocal;
 #[derive(Clone, Debug, PartialEq)]
 pub struct UserAgentStylesheet(DocumentStyleSheet);
 
+/// Turns on the Stylo features this engine supports. Properties behind a
+/// pref only parse once it is on, so this must run before any stylesheet is
+/// parsed (the default UA sheet is parsed by `DocumentConfig::default()`,
+/// before any document exists).
+pub(crate) fn enable_stylo_features() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        style_config::set_pref!("layout.grid.enabled", true);
+        style_config::set_pref!("layout.flexbox.balance", true);
+        style_config::set_pref!("layout.unimplemented", true);
+        style_config::set_pref!("layout.columns.enabled", true);
+        style_config::set_pref!("layout.css.basic-shape-shape.enabled", true);
+        style_config::set_pref!("layout.css.tree-counting-functions.enabled", true);
+        style_config::set_pref!("layout.css.progress-function.enabled", true);
+        style_config::set_pref!("layout.variable_fonts.enabled", true);
+        #[cfg(feature = "writing-mode")]
+        style_config::set_pref!("layout.writing-mode.enabled", true);
+        style_config::set_pref!("layout.threads", -1);
+    });
+}
+
 impl UserAgentStylesheet {
     pub fn parse(css: &str) -> Self {
+        enable_stylo_features();
         let lock = SharedRwLock::read_only();
         let data = Stylesheet::from_str(
             css,
@@ -298,6 +320,9 @@ pub struct BaseDocument {
     pub(crate) last_client_pointer_position: Option<taffy::Point<f32>>,
     /// The node which is currently focussed (if any)
     pub(crate) focus_node_id: Option<NodeId>,
+    /// Whether the last user input was the keyboard rather than a pointer. Focus
+    /// moved while it is (by the keyboard or by script) matches `:focus-visible`.
+    pub(crate) keyboard_modality: bool,
     /// The node which is currently active (if any)
     pub(crate) active_node_id: Option<NodeId>,
     /// The node which recieved a mousedown event (if any)
@@ -426,17 +451,7 @@ impl BaseDocument {
         let font_ctx = Arc::new(Mutex::new(font_ctx));
 
         // Make sure we turn on stylo features *before* creating the Stylist
-        style_config::set_pref!("layout.grid.enabled", true);
-        style_config::set_pref!("layout.flexbox.balance", true);
-        style_config::set_pref!("layout.unimplemented", true);
-        style_config::set_pref!("layout.columns.enabled", true);
-        style_config::set_pref!("layout.css.basic-shape-shape.enabled", true);
-        style_config::set_pref!("layout.css.tree-counting-functions.enabled", true);
-        style_config::set_pref!("layout.css.progress-function.enabled", true);
-        style_config::set_pref!("layout.variable_fonts.enabled", true);
-        #[cfg(feature = "writing-mode")]
-        style_config::set_pref!("layout.writing-mode.enabled", true);
-        style_config::set_pref!("layout.threads", -1);
+        enable_stylo_features();
 
         let viewport = config.viewport.unwrap_or_default();
         let media_type = config.media_type.unwrap_or_else(MediaType::screen);
@@ -499,6 +514,8 @@ impl BaseDocument {
             hover_node_is_text: false,
             last_client_pointer_position: None,
             focus_node_id: None,
+            // Script focus before any user input shows a focus ring, as in browsers
+            keyboard_modality: true,
             active_node_id: None,
             mousedown_node_id: None,
             has_active_animations: false,
@@ -964,6 +981,7 @@ impl BaseDocument {
         let drag_references_node = match &self.drag_mode {
             DragMode::Panning(state) => state.target == node_id,
             DragMode::ScrollbarDrag(state) => state.scrollbar.node_id == node_id,
+            DragMode::RangeDrag(id) => *id == node_id,
             DragMode::Selecting | DragMode::None => false,
         };
         if drag_references_node {
@@ -1717,16 +1735,44 @@ impl BaseDocument {
             });
         }
 
-        // Focus the new node
+        // Focus the new node. It matches `:focus-visible` when focus moved by the
+        // keyboard (or by script after keyboard use), or when it takes text input.
+        let focus_visible = self.keyboard_modality
+            || self.nodes[focus_node_id]
+                .element_data()
+                .is_some_and(|el| el.text_input_data().is_some());
         self.snapshot_node_and(
             focus_node_id,
             ElementState::FOCUS | ElementState::FOCUSRING,
-            |node| node.focus(shell_provider),
+            |node| {
+                node.focus(shell_provider);
+                if !focus_visible && let Some(el) = node.element_data_mut() {
+                    el.element_state.remove(ElementState::FOCUSRING);
+                }
+            },
         );
 
         self.focus_node_id = Some(focus_node_id);
 
         true
+    }
+
+    /// Record which kind of input the user used last (for `:focus-visible`). Keyboard
+    /// use also makes an already-focused element match `:focus-visible`.
+    pub fn set_keyboard_modality(&mut self, keyboard: bool) {
+        self.keyboard_modality = keyboard;
+        let Some(id) = self.focus_node_id else { return };
+        let shows_ring = self.nodes[id]
+            .element_data()
+            .is_none_or(|el| el.element_state.contains(ElementState::FOCUSRING));
+        if keyboard && !shows_ring {
+            self.snapshot_node_and(id, ElementState::FOCUSRING, |node| {
+                if let Some(el) = node.element_data_mut() {
+                    el.element_state.insert(ElementState::FOCUSRING);
+                }
+                node.mark_ancestors_dirty();
+            });
+        }
     }
 
     pub fn active_node(&mut self) -> bool {

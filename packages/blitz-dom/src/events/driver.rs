@@ -4,6 +4,7 @@ use blitz_traits::events::{
     UiEvent,
 };
 use blitz_traits::node_id::NodeId;
+use keyboard_types::{Key, Modifiers};
 use std::collections::VecDeque;
 
 pub trait EventHandler {
@@ -186,8 +187,18 @@ impl<'doc, Handler: EventHandler> EventDriver<'doc, Handler> {
             UiEvent::PointerDown(event) => {
                 hover_node_id = self.handle_pointer_move(event);
                 let mut doc = self.doc.inner_mut();
+                doc.set_keyboard_modality(false);
                 doc.active_node();
                 doc.set_mousedown_node_id(hover_node_id);
+            }
+            // A key that isn't a modifier or a shortcut is keyboard use (`:focus-visible`)
+            UiEvent::KeyDown(event)
+                if !is_modifier_key(&event.key)
+                    && !event
+                        .modifiers
+                        .intersects(Modifiers::CONTROL | Modifiers::ALT | Modifiers::META) =>
+            {
+                self.doc.inner_mut().set_keyboard_modality(true);
             }
             UiEvent::PointerUp(event) => {
                 hover_node_id = self.handle_pointer_move(event);
@@ -424,4 +435,24 @@ impl<'doc, Handler: EventHandler> EventDriver<'doc, Handler> {
         let mut doc = self.doc.inner_mut();
         doc.handle_dom_event(event, |new_evt| self.queue.push_back(new_evt));
     }
+}
+
+fn is_modifier_key(key: &Key) -> bool {
+    matches!(
+        key,
+        Key::Alt
+            | Key::AltGraph
+            | Key::CapsLock
+            | Key::Control
+            | Key::Fn
+            | Key::FnLock
+            | Key::Meta
+            | Key::NumLock
+            | Key::ScrollLock
+            | Key::Shift
+            | Key::Symbol
+            | Key::SymbolLock
+            | Key::Hyper
+            | Key::Super
+    )
 }
