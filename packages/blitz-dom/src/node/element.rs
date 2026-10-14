@@ -631,6 +631,15 @@ impl ElementData {
         }
     }
 
+    /// Whether this element is a focusable area: focusable by a click or by script.
+    /// Unlike `is_focussable` (the sequential, Tab order), this includes elements
+    /// with a negative `tabindex`.
+    pub fn is_focusable_area(&self) -> bool {
+        self.is_focussable
+            || (!self.has_attr(local_name!("disabled"))
+                && self.attr_parsed::<i32>(local_name!("tabindex")).is_some())
+    }
+
     pub fn flush_is_focussable(&mut self) {
         let disabled: bool = self.attr_parsed(local_name!("disabled")).unwrap_or(false);
         let tabindex: Option<i32> = self.attr_parsed(local_name!("tabindex"));

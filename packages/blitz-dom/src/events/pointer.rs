@@ -61,6 +61,8 @@ pub(crate) enum DragMode {
     Panning(PanState),
     /// We are currently dragging a scrollbar thumb
     ScrollbarDrag(ScrollbarDragState),
+    /// We are currently dragging a range input's thumb
+    RangeDrag(NodeId),
 }
 
 impl DragMode {
@@ -276,6 +278,13 @@ pub(crate) fn handle_pointermove<F: FnMut(DomEvent)>(
         return has_changed;
     }
 
+    if let DragMode::RangeDrag(node_id) = doc.drag_mode {
+        if let Some(value) = doc.range_value_at(node_id, x) {
+            return doc.set_range_value(node_id, value, &mut dispatch_event);
+        }
+        return changed;
+    }
+
     if let DragMode::ScrollbarDrag(state) = &mut doc.drag_mode {
         let ScrollbarRef { node_id, axis } = state.scrollbar;
         let pos = match axis {
@@ -440,6 +449,28 @@ pub(crate) fn handle_pointerdown(
     // but not DOM children), so we use the hit result for text selection.
     let actual_target = hit.node_id;
 
+    // A range input: the value jumps to the pointer and follows it while the
+    // button is held.
+    if button == MouseEventButton::Main
+        && let Some(el) = doc.nodes[actual_target].element_data()
+        && crate::RangeState::of(el).is_some()
+        && !el.has_attr(local_name!("disabled"))
+    {
+        doc.clear_text_selection();
+        if let Some(value) = doc.range_value_at(actual_target, x) {
+            doc.set_range_value(actual_target, value, dispatch_event);
+        }
+        doc.drag_mode = DragMode::RangeDrag(actual_target);
+        generate_focus_events(
+            doc,
+            &mut |doc| {
+                doc.set_focus_to(actual_target);
+            },
+            dispatch_event,
+        );
+        return;
+    }
+
     // Check what kind of element we're dealing with and extract needed info
     enum ClickTarget {
         TextInput {
@@ -505,6 +536,28 @@ pub(crate) fn handle_pointerdown(
             } else {
                 doc.clear_text_selection();
             }
+
+            // Pressing the mouse focuses the nearest focusable area (any element with a
+            // `tabindex`, `-1` included, or a focusable control); pressing elsewhere
+            // removes focus.
+            let mut focus_target = Some(actual_target);
+            while let Some(id) = focus_target {
+                let node = &doc.nodes[id];
+                if node.element_data().is_some_and(|el| el.is_focusable_area()) {
+                    break;
+                }
+                focus_target = node.parent;
+            }
+            generate_focus_events(
+                doc,
+                &mut |doc| match focus_target {
+                    Some(id) => {
+                        doc.set_focus_to(id);
+                    }
+                    None => doc.clear_focus(),
+                },
+                dispatch_event,
+            );
         }
         ClickTarget::TextInput {
             content_box_offset,
@@ -575,8 +628,9 @@ pub(crate) fn handle_pointerup<F: FnMut(DomEvent)>(
     let drag_mode = doc.drag_mode.take();
 
     // Don't dispatch click if we were doing a text selection drag or panning
-    // the document with a touch
-    let do_click = drag_mode == DragMode::None;
+    // the document with a touch (a range input's drag ends in a click, as in
+    // browsers)
+    let do_click = matches!(drag_mode, DragMode::None | DragMode::RangeDrag(_));
 
     // Repaint so a dragged scrollbar thumb drops its active styling, and
     // restart its fade-out delay now that the drag no longer holds it shown
@@ -620,8 +674,11 @@ pub(crate) fn handle_click(
     let double_click_event = event.clone();
 
     let mut maybe_node_id = Some(target);
+    // The elements the click passed on its way up from the target.
+    let mut path: Vec<NodeId> = Vec::new();
     let matched = 'matched: {
         while let Some(node_id) = maybe_node_id {
+            path.push(node_id);
             let maybe_element = {
                 let node = &mut doc.nodes[node_id];
                 node.data.downcast_element_mut()
@@ -722,6 +779,20 @@ pub(crate) fn handle_click(
                 }
                 // Clicking labels triggers click, and possibly input event, of associated input
                 local_name!("label") => {
+                    // A click on the labeled control, or on interactive content
+                    // inside the label, isn't the label's to activate (and
+                    // re-dispatching it to the control would come back here).
+                    let from_interactive = path[..path.len() - 1].iter().any(|&id| {
+                        doc.nodes[id].element_data().is_some_and(|el| {
+                            matches!(
+                                el.name.local.as_ref(),
+                                "input" | "button" | "select" | "textarea" | "a" | "object"
+                            )
+                        })
+                    });
+                    if from_interactive {
+                        break 'matched true;
+                    }
                     if let Some(target_node_id) =
                         doc.label_bound_input_element(node_id).map(|n| n.id)
                     {
@@ -773,8 +844,9 @@ pub(crate) fn handle_click(
                     let files = doc.shell_provider.open_file_dialog(multiple, None);
 
                     if let Some(file) = files.first() {
-                        el.attrs
-                            .set(qual_name!("value", html), &file.to_string_lossy());
+                        // In no namespace, as the parser creates attributes
+                        // (an html-namespaced one would be a second `value`).
+                        el.attrs.set(qual_name!("value"), &file.to_string_lossy());
                     }
                     let text_content = match files.len() {
                         0 => "No Files Selected".to_string(),
@@ -811,10 +883,10 @@ pub(crate) fn handle_click(
         false
     };
 
-    // If nothing is matched then clear focus
-    if !matched {
-        generate_focus_events(doc, &mut |doc| doc.clear_focus(), dispatch_event);
-    }
+    // Focus moved on pointerdown (`handle_pointerdown`); a click itself (which may be
+    // synthetic: keyboard activation, `element.click()`, an accessibility action)
+    // doesn't move it.
+    let _ = matched;
 
     // Dispatch double-click event if this is the second click in quick succession
     // (click_count was already computed in handle_mousedown)

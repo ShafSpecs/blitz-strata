@@ -53,6 +53,7 @@ mod iframe;
 mod layout;
 mod mutator;
 mod query_selector;
+mod range_input;
 mod resolve;
 /// Computation of resolved CSS property values (`getComputedStyle()`)
 mod resolved_style;
@@ -158,3 +159,5 @@ pub fn build_single_font_ctx(font_data: &[u8]) -> FontContext {
     }
     ctx
 }
+
+pub use range_input::{RangeState, THUMB_SIZE as RANGE_THUMB_SIZE};
