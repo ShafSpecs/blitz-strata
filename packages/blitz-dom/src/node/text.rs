@@ -77,6 +77,9 @@ pub struct TextInputData {
     pub placeholder: Option<PlaceholderLayout>,
     /// Undo and redo (Ctrl+Z, Ctrl+Y / Ctrl+Shift+Z).
     pub history: EditHistory,
+    /// An IME composition is in progress (between `compositionstart` and
+    /// `compositionend`).
+    pub composing: bool,
 }
 
 /// A text input's undo history: the text and selection before each group of
@@ -156,6 +159,7 @@ impl TextInputData {
             scroll_offset: 0.0,
             placeholder: None,
             history: EditHistory::default(),
+            composing: false,
         }
     }
 
@@ -165,7 +169,15 @@ impl TextInputData {
         layout_ctx: &mut LayoutContext<TextBrush>,
         text: &str,
     ) {
-        if self.editor.text() != text {
+        // While composing, the page has seen the text with the preedit in it
+        // (input events carry it): setting that same text changes nothing,
+        // and leaves the composition alone.
+        let same = if self.editor.is_composing() {
+            self.editor.raw_text() == text
+        } else {
+            self.editor.text() == text
+        };
+        if !same {
             self.editor.set_text(text);
             self.editor.driver(font_ctx, layout_ctx).refresh_layout();
             self.history.clear();
@@ -916,20 +928,29 @@ impl TextInputData {
                 None
             }
             BlitzImeEvent::Disabled => {
+                // A preedit left over (a cancelled composition) is removed,
+                // and the page told the text changed.
+                let had_preedit = driver.editor.is_composing();
                 driver.clear_compose();
-                Some(GeneratedTextInputEvent::PreEditChange)
+                Some(if had_preedit { GeneratedTextInputEvent::Input } else { GeneratedTextInputEvent::PreEditChange })
             }
             BlitzImeEvent::Commit(text) => {
                 driver.insert_or_replace_selection(&text);
                 Some(GeneratedTextInputEvent::Input)
             }
+            // The text with the preedit in it is the input's value during a
+            // composition (input events fire for each change, as in browsers),
+            // so a page that controls the value keeps it.
             BlitzImeEvent::Preedit(text, cursor) => {
                 if text.is_empty() {
+                    if !driver.editor.is_composing() {
+                        return Some(GeneratedTextInputEvent::PreEditChange);
+                    }
                     driver.clear_compose();
                 } else {
                     driver.set_compose(&text, cursor);
                 }
-                Some(GeneratedTextInputEvent::PreEditChange)
+                Some(GeneratedTextInputEvent::Input)
             }
             BlitzImeEvent::DeleteSurrounding {
                 before_bytes,
