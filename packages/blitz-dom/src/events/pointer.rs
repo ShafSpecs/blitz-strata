@@ -574,6 +574,8 @@ pub(crate) fn handle_pointerdown(
             let node = &mut doc.nodes[actual_target];
             let el = node.data.downcast_element_mut().unwrap();
             if let SpecialElementData::TextInput(ref mut text_input_data) = el.special_data {
+                // A click moves the caret: the next edit starts a new undo step.
+                text_input_data.history.break_group();
                 let mut font_ctx = doc.font_ctx.lock().unwrap();
                 let mut driver = text_input_data
                     .editor
